@@ -1,5 +1,6 @@
 import { initializeApp } from "firebase/app";
 import { getFirestore } from "firebase/firestore";
+import { getAuth } from "firebase/auth"; // Dodany import
 
 const firebaseConfig = {
   apiKey: "AIzaSyAMWs1cvWmS07v2t5IiK9kATrMw-aFNJUc",
@@ -14,3 +15,4 @@ const firebaseConfig = {
 // Inicjalizują Firebase i EKSPORTUJĄ zmienną 'db', której szuka page.js
 const app = initializeApp(firebaseConfig);
 export const db = getFirestore(app);
+export const auth = getAuth(app); // Wyeksportowana autoryzacja
