@@ -1,9 +1,8 @@
 'use client';
 import { collection, addDoc, query, orderBy, onSnapshot } from "firebase/firestore";
-import { signInWithRedirect, GoogleAuthProvider, signOut, onAuthStateChanged } from "firebase/auth";
+import { signInWithRedirect, GoogleAuthProvider, signOut, onAuthStateChanged, getRedirectResult } from "firebase/auth";
 import { db, auth } from "./firebase";
 import { useState, useEffect } from 'react';
-import { signInWithRedirect, GoogleAuthProvider, signOut, onAuthStateChanged, getRedirectResult } from "firebase/auth";
 
 export default function Home() {
   const [user, setUser] = useState(null); // Stan przechowujący info o użytkowniku
