@@ -60,10 +60,14 @@ export default function Home() {
     e.preventDefault();
     if (!user) return; 
     
+    // Zabezpieczenie przed przecinkami zamiast kropek
+    const safeCarbs = carbs.replace(',', '.');
+    const safeInsulin = insulin.replace(',', '.');
+
     try {
       await addDoc(collection(db, "meals"), {
-        carbs: parseFloat(carbs),
-        insulin: parseFloat(insulin),
+        carbs: parseFloat(safeCarbs),
+        insulin: parseFloat(safeInsulin),
         mealType,
         timestamp: new Date().toISOString(),
         userEmail: user.email 
@@ -77,7 +81,6 @@ export default function Home() {
     }
   };
 
-  // Nowa funkcja usuwania wpisu
   const handleDelete = async (id) => {
     const isConfirmed = window.confirm("Czy na pewno chcesz usunąć ten wpis?");
     if (isConfirmed) {
@@ -94,6 +97,22 @@ export default function Home() {
     const date = new Date(isoString);
     return date.toLocaleTimeString('pl-PL', { hour: '2-digit', minute: '2-digit' });
   };
+
+  // --- LOGIKA PODSUMOWANIA DNIA ---
+  const dzisiejszaData = new Date();
+  
+  // Filtrujemy tylko wpisy z dzisiaj
+  const todaysMeals = history.filter((item) => {
+    const itemDate = new Date(item.timestamp);
+    return itemDate.getDate() === dzisiejszaData.getDate() &&
+           itemDate.getMonth() === dzisiejszaData.getMonth() &&
+           itemDate.getFullYear() === dzisiejszaData.getFullYear();
+  });
+
+  // Sumujemy wartości
+  const totalCarbs = todaysMeals.reduce((sum, item) => sum + (Number(item.carbs) || 0), 0);
+  const totalInsulin = todaysMeals.reduce((sum, item) => sum + (Number(item.insulin) || 0), 0);
+  // --------------------------------
 
   if (isAuthChecking) {
     return <div className="min-h-screen flex items-center justify-center bg-gray-100 text-gray-600">Ładowanie...</div>;
@@ -178,13 +197,34 @@ export default function Home() {
         </button>
       </form>
 
-      <div className="space-y-4">
-        <h3 className="text-xl font-bold text-gray-900">Dzisiejsze wpisy</h3>
-        {history.length === 0 ? (
-          <p className="text-gray-600 italic bg-white p-4 rounded-xl border border-gray-200 text-center">Brak wpisów.</p>
+      <div className="space-y-4 mb-8">
+        <h3 className="text-xl font-bold text-gray-900">Dzisiejsze podsumowanie</h3>
+        
+        {/* NOWOŚĆ: Karta Podsumowania */}
+        <div className="bg-gradient-to-r from-blue-50 to-emerald-50 p-4 rounded-2xl border border-blue-100 flex justify-between items-center shadow-sm">
+          <div className="text-center flex-1">
+            <span className="block text-xs font-bold text-blue-600 uppercase tracking-wider mb-1">Suma Węgli</span>
+            <span className="text-3xl font-black text-gray-900">
+              {Number(totalCarbs.toFixed(1))}
+              <span className="text-sm font-bold text-gray-500 ml-1">g</span>
+            </span>
+          </div>
+          <div className="w-px h-12 bg-gray-300/50"></div>
+          <div className="text-center flex-1">
+            <span className="block text-xs font-bold text-emerald-600 uppercase tracking-wider mb-1">Suma Insuliny</span>
+            <span className="text-3xl font-black text-emerald-600">
+              {Number(totalInsulin.toFixed(1))}
+              <span className="text-sm font-bold text-emerald-500/70 ml-1">j.</span>
+            </span>
+          </div>
+        </div>
+
+        {todaysMeals.length === 0 ? (
+          <p className="text-gray-600 italic bg-white p-4 rounded-xl border border-gray-200 text-center">Dodaj wpis, aby zobaczyć podsumowanie.</p>
         ) : (
-          <div className="space-y-2">
-            {history.map((item) => (
+          <div className="space-y-2 mt-4">
+            {/* Zmieniliśmy history.map na todaysMeals.map */}
+            {todaysMeals.map((item) => (
               <div key={item.id} className="flex justify-between items-center bg-white p-4 rounded-xl shadow-sm border border-gray-200">
                 <div>
                   <span className="text-xs font-bold text-blue-600 uppercase tracking-wider">
@@ -195,7 +235,6 @@ export default function Home() {
                   </div>
                 </div>
                 
-                {/* Nowy kontener z przyciskiem USUŃ */}
                 <div className="flex flex-col items-end justify-between">
                   <div className="text-right">
                     <span className="text-xs font-bold text-gray-500 block">Insulina</span>
