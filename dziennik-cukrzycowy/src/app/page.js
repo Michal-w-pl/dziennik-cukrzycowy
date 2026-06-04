@@ -1,11 +1,11 @@
 'use client';
-import { collection, addDoc, query, orderBy, onSnapshot } from "firebase/firestore";
+import { collection, addDoc, query, orderBy, onSnapshot, deleteDoc, doc } from "firebase/firestore";
 import { signInWithPopup, GoogleAuthProvider, signOut, onAuthStateChanged } from "firebase/auth";
 import { db, auth } from "./firebase";
 import { useState, useEffect } from 'react';
 
 export default function Home() {
-  const [user, setUser] = useState(null); // Stan przechowujący info o użytkowniku
+  const [user, setUser] = useState(null);
   const [isAuthChecking, setIsAuthChecking] = useState(true);
 
   const [carbs, setCarbs] = useState('');
@@ -15,25 +15,22 @@ export default function Home() {
 
   const mealOptions = ['Śniadanie', 'II Śniadanie', 'Obiad', 'Kolacja', 'Przekąska'];
 
-  /// Nasłuchiwanie na zmiany stanu logowania
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
       setUser(currentUser);
       setIsAuthChecking(false);
     });
-    
     return () => unsubscribe();
   }, []);
 
-  // Pobieranie danych tylko wtedy, gdy użytkownik jest zalogowany
   useEffect(() => {
     if (!user) return;
 
     const q = query(collection(db, "meals"), orderBy("timestamp", "desc"));
     const unsubscribe = onSnapshot(q, (querySnapshot) => {
       const mealsArray = [];
-      querySnapshot.forEach((doc) => {
-        mealsArray.push({ id: doc.id, ...doc.data() });
+      querySnapshot.forEach((document) => {
+        mealsArray.push({ id: document.id, ...document.data() });
       });
       setHistory(mealsArray);
     });
@@ -41,7 +38,6 @@ export default function Home() {
     return () => unsubscribe();
   }, [user]);
 
-  // Funkcje logowania i wylogowania
   const handleLogin = async () => {
     const provider = new GoogleAuthProvider();
     try {
@@ -62,7 +58,7 @@ export default function Home() {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    if (!user) return; // Zabezpieczenie przed zapisem bez logowania
+    if (!user) return; 
     
     try {
       await addDoc(collection(db, "meals"), {
@@ -70,7 +66,7 @@ export default function Home() {
         insulin: parseFloat(insulin),
         mealType,
         timestamp: new Date().toISOString(),
-        userEmail: user.email // Zapisujemy, kto dodał wpis
+        userEmail: user.email 
       });
       
       setCarbs('');
@@ -81,17 +77,28 @@ export default function Home() {
     }
   };
 
+  // Nowa funkcja usuwania wpisu
+  const handleDelete = async (id) => {
+    const isConfirmed = window.confirm("Czy na pewno chcesz usunąć ten wpis?");
+    if (isConfirmed) {
+      try {
+        await deleteDoc(doc(db, "meals", id));
+      } catch (error) {
+        console.error("Błąd usuwania:", error);
+        alert(`Błąd podczas usuwania: ${error.message}`);
+      }
+    }
+  };
+
   const formatTime = (isoString) => {
     const date = new Date(isoString);
     return date.toLocaleTimeString('pl-PL', { hour: '2-digit', minute: '2-digit' });
   };
 
-  // Ekran ładowania
   if (isAuthChecking) {
     return <div className="min-h-screen flex items-center justify-center bg-gray-100 text-gray-600">Ładowanie...</div>;
   }
 
-  // Ekran logowania (jeśli brak usera)
   if (!user) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gray-100 p-4">
@@ -109,7 +116,6 @@ export default function Home() {
     );
   }
 
-  // Główny widok aplikacji (jeśli zalogowany)
   return (
     <div className="max-w-md mx-auto p-4 bg-gray-100 min-h-screen text-gray-900">
       <div className="flex justify-between items-center mb-6">
@@ -188,9 +194,19 @@ export default function Home() {
                     Węglowodany: <span className="text-blue-700">{item.carbs}g</span>
                   </div>
                 </div>
-                <div className="text-right">
-                  <span className="text-xs font-bold text-gray-500 block">Insulina</span>
-                  <span className="text-xl font-black text-emerald-600">{item.insulin} j.</span>
+                
+                {/* Nowy kontener z przyciskiem USUŃ */}
+                <div className="flex flex-col items-end justify-between">
+                  <div className="text-right">
+                    <span className="text-xs font-bold text-gray-500 block">Insulina</span>
+                    <span className="text-xl font-black text-emerald-600">{item.insulin} j.</span>
+                  </div>
+                  <button 
+                    onClick={() => handleDelete(item.id)}
+                    className="mt-2 text-xs font-bold text-red-500 hover:text-red-700 transition-colors p-1"
+                  >
+                    USUŃ
+                  </button>
                 </div>
               </div>
             ))}
