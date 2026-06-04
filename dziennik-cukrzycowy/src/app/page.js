@@ -3,6 +3,7 @@ import { collection, addDoc, query, orderBy, onSnapshot } from "firebase/firesto
 import { signInWithRedirect, GoogleAuthProvider, signOut, onAuthStateChanged } from "firebase/auth";
 import { db, auth } from "./firebase";
 import { useState, useEffect } from 'react';
+import { signInWithRedirect, GoogleAuthProvider, signOut, onAuthStateChanged, getRedirectResult } from "firebase/auth";
 
 export default function Home() {
   const [user, setUser] = useState(null); // Stan przechowujący info o użytkowniku
@@ -15,14 +16,26 @@ export default function Home() {
 
   const mealOptions = ['Śniadanie', 'II Śniadanie', 'Obiad', 'Kolacja', 'Przekąska'];
 
-  // Nasłuchiwanie na zmiany stanu logowania
-  useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
-      setUser(currentUser);
-      setIsAuthChecking(false);
-    });
-    return () => unsubscribe();
-  }, []);
+  // Nasłuchiwanie na zmiany stanu logowania i odbiór przekierowania
+useEffect(() => {
+  // Najpierw sprawdzamy, czy użytkownik właśnie wrócił z okna logowania Google
+  getRedirectResult(auth).then((result) => {
+    if (result) {
+      console.log("Zalogowano pomyślnie z przekierowania!");
+    }
+  }).catch((error) => {
+    console.error("Błąd powrotu z logowania:", error);
+    alert(`Błąd autoryzacji: ${error.message}`);
+  });
+
+  // Standardowe nasłuchiwanie
+  const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
+    setUser(currentUser);
+    setIsAuthChecking(false);
+  });
+  
+  return () => unsubscribe();
+}, []);
 
   // Pobieranie danych tylko wtedy, gdy użytkownik jest zalogowany
   useEffect(() => {
