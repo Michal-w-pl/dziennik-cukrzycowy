@@ -1,4 +1,6 @@
 'use client';
+// Zmień linijkę importu Recharts na tę:
+import { ComposedChart, Line, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine, Legend } from 'recharts';
 import { collection, addDoc, query, orderBy, onSnapshot, deleteDoc, doc } from "firebase/firestore";
 import { signInWithPopup, GoogleAuthProvider, signOut, onAuthStateChanged } from "firebase/auth";
 import { db, auth } from "./firebase";
@@ -124,15 +126,16 @@ export default function Home() {
   const totalCarbs = filteredMeals.reduce((sum, item) => sum + (Number(item.carbs) || 0), 0);
   const totalInsulin = filteredMeals.reduce((sum, item) => sum + (Number(item.insulin) || 0), 0);
 
-  // --- LOGIKA PRZYGOTOWANIA DANYCH DO WYKRESU (Ostatnie 7 dni z pomiarami cukru) ---
+  // --- LOGIKA PRZYGOTOWANIA DANYCH DO WYKRESU (Zintegrowane) ---
   const chartData = history
-    .filter(item => item.sugar !== undefined && item.sugar !== null) // tylko wpisy z cukrem
-    .slice(0, 20) // bierzemy ostatnich 20 pomiarów do wykresu trendu
+    .slice(0, 20) // bierzemy ostatnich 20 wpisów do wykresu
     .map(item => ({
       name: `${formatDateLabel(item.timestamp)} ${formatTime(item.timestamp)}`,
-      'Cukier (mg/dl)': item.sugar,
+      'Cukier': item.sugar || null,
+      'Węglowodany': Number(item.carbs) || 0,
+      'Insulina': Number(item.insulin) || 0,
     }))
-    .reverse(); // odwracamy chronologicznie (od najstarszego do najnowszego)
+    .reverse(); // odwracamy chronologicznie
 
   // --- LOGIKA RAPORTU TABELARYCZNEGO (Agregacja po dniach) ---
   const dailySummaryObj = {};
@@ -325,24 +328,39 @@ export default function Home() {
       {/* NOWOŚĆ ZAKŁADKA 2: RAPORTY DLA LEKARZA */}
       {activeTab === 'reports' && (
         <div className="space-y-6 animate-fadeIn">
-          {/* Wykres Trendu Glikemii */}
+          {/* Zintegrowany Wykres: Węgle, Insulina, Cukier */}
           <div className="bg-white p-4 rounded-2xl border border-gray-200 shadow-md">
-            <h3 className="text-sm font-bold text-gray-700 uppercase tracking-wider mb-4">Wykres Trendu Cukru (mg/dl)</h3>
+            <h3 className="text-sm font-bold text-gray-700 uppercase tracking-wider mb-4">Wykres Zależności</h3>
             {chartData.length === 0 ? (
-              <p className="text-gray-500 italic text-center py-8 text-sm">Wprowadź wpisy z poziomem cukru, aby wygenerować wykres.</p>
+              <p className="text-gray-500 italic text-center py-8 text-sm">Brak danych do wyświetlenia wykresu.</p>
             ) : (
-              <div className="w-full h-56">
+              <div className="w-full h-64">
                 <ResponsiveContainer width="100%" height="100%">
-                  <LineChart data={chartData} margin={{ top: 5, right: 10, left: -20, bottom: 5 }}>
+                  <ComposedChart data={chartData} margin={{ top: 5, right: 0, left: -25, bottom: 5 }}>
                     <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
                     <XAxis dataKey="name" tick={{ fontSize: 9, fill: '#9ca3af' }} />
-                    <YAxis domain={['dataMin - 20', 'dataMax + 20']} tick={{ fontSize: 10, fill: '#9ca3af' }} />
-                    <Tooltip contentStyle={{ fontSize: '11px', borderRadius: '8px' }} />
-                    {/* Linie odniesienia normy glikemii (np. 70 i 180) */}
-                    <ReferenceLine y={70} stroke="#f59e0b" strokeDasharray="3 3" label={{ value: 'Hypo', fill: '#f59e0b', fontSize: 8, position: 'insideBottomLeft' }} />
-                    <ReferenceLine y={180} stroke="#ef4444" strokeDasharray="3 3" label={{ value: 'Hyper', fill: '#ef4444', fontSize: 8, position: 'insideTopLeft' }} />
-                    <Line type="monotone" dataKey="Cukier (mg/dl)" stroke="#ef4444" strokeWidth={3} activeDot={{ r: 6 }} dot={{ r: 3, fill: '#ef4444' }} />
-                  </LineChart>
+                    
+                    {/* Lewa oś dla Węglowodanów i Cukru */}
+                    <YAxis yAxisId="left" tick={{ fontSize: 10, fill: '#9ca3af' }} />
+                    {/* Prawa oś (zielona) wykalibrowana dla Insuliny */}
+                    <YAxis yAxisId="right" orientation="right" tick={{ fontSize: 10, fill: '#10b981' }} />
+                    
+                    <Tooltip contentStyle={{ fontSize: '11px', borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }} />
+                    <Legend wrapperStyle={{ fontSize: '11px', paddingTop: '10px' }} />
+
+                    {/* Linie ostrzegawcze przypięte do lewej osi (cukier) */}
+                    <ReferenceLine yAxisId="left" y={70} stroke="#f59e0b" strokeDasharray="3 3" />
+                    <ReferenceLine yAxisId="left" y={180} stroke="#ef4444" strokeDasharray="3 3" />
+
+                    {/* Słupki węglowodanów */}
+                    <Bar yAxisId="left" dataKey="Węglowodany" fill="#3b82f6" barSize={12} radius={[4, 4, 0, 0]} />
+                    
+                    {/* Linia i punkty Insuliny (Prawa oś) */}
+                    <Line yAxisId="right" type="monotone" dataKey="Insulina" stroke="#10b981" strokeWidth={3} dot={{ r: 3, fill: '#10b981' }} />
+                    
+                    {/* Linia Cukru z connectNulls (Omija puste pola, łączy tylko wpisane glikemie) */}
+                    <Line yAxisId="left" type="monotone" dataKey="Cukier" stroke="#ef4444" strokeWidth={3} connectNulls dot={{ r: 4, fill: '#ef4444' }} />
+                  </ComposedChart>
                 </ResponsiveContainer>
               </div>
             )}
