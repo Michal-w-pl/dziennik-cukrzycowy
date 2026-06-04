@@ -1,6 +1,6 @@
 'use client';
 import { collection, addDoc, query, orderBy, onSnapshot } from "firebase/firestore";
-import { signInWithPopup, GoogleAuthProvider, signOut, onAuthStateChanged } from "firebase/auth";
+import { signInWithRedirect, GoogleAuthProvider, signOut, onAuthStateChanged } from "firebase/auth";
 import { db, auth } from "./firebase";
 import { useState, useEffect } from 'react';
 
@@ -42,13 +42,15 @@ export default function Home() {
 
   // Funkcje logowania i wylogowania
   const handleLogin = async () => {
-    const provider = new GoogleAuthProvider();
-    try {
-      await signInWithPopup(auth, provider);
-    } catch (error) {
-      console.error("Błąd logowania:", error);
-    }
-  };
+  const provider = new GoogleAuthProvider();
+  try {
+    // Zmieniamy okienko na pełne przekierowanie
+    await signInWithRedirect(auth, provider);
+  } catch (error) {
+    console.error("Błąd logowania:", error);
+    alert(`Błąd logowania: ${error.message}`);
+  }
+};
 
   const handleLogout = async () => {
     try {
