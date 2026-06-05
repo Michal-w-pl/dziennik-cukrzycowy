@@ -2,9 +2,9 @@
 import { collection, addDoc, query, orderBy, onSnapshot, deleteDoc, doc } from "firebase/firestore";
 import { signInWithPopup, GoogleAuthProvider, signOut, onAuthStateChanged } from "firebase/auth";
 import { db, auth } from "./firebase";
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { ComposedChart, Line, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine, Legend } from 'recharts';
-import { Html5QrcodeScanner } from 'html5-qrcode'; // NOWA, POTĘŻNA BIBLIOTEKA
+import { Html5QrcodeScanner } from 'html5-qrcode';
 
 const getLocalISODate = () => {
   const tzoffset = (new Date()).getTimezoneOffset() * 60000;
@@ -15,57 +15,24 @@ const getLocalTime = () => {
   return new Date().toLocaleTimeString('pl-PL', { hour: '2-digit', minute: '2-digit' });
 };
 
-// NOWY KOMPONENT SKANERA (html5-qrcode)
 const BarcodeScanner = ({ onResult, onCancel }) => {
   useEffect(() => {
-    // Konfiguracja skanera zoptymalizowana pod kody kreskowe produktów (prostokątne)
     const scanner = new Html5QrcodeScanner(
       "reader",
-      { 
-        fps: 10, 
-        qrbox: { width: 250, height: 120 },
-        aspectRatio: 1.0,
-        formatsToSupport: [ 
-            0, // CODE_128
-            1, // CODE_39
-            8, // EAN_13 (Najpopularniejszy dla żywności w Europie)
-            9, // EAN_8
-            14 // UPC_A
-        ]
-      },
+      { fps: 10, qrbox: { width: 250, height: 120 }, aspectRatio: 1.0, formatsToSupport: [0, 1, 8, 9, 14] },
       false
     );
-
-    scanner.render(
-      (decodedText) => {
-        // Po udanym skanowaniu, czyścimy kamerę i zwracamy wynik
-        scanner.clear();
-        onResult(decodedText);
-      },
-      (error) => {
-        // Ignorujemy błędy w tle (skaner rzuca błąd co klatkę, gdy nie widzi kodu)
-      }
-    );
-
-    // Czyszczenie przy zamknięciu komponentu
-    return () => {
-      scanner.clear().catch(error => console.error("Błąd czyszczenia skanera", error));
-    };
+    scanner.render((decodedText) => { scanner.clear(); onResult(decodedText); }, (error) => {});
+    return () => { scanner.clear().catch(err => console.error(err)); };
   }, [onResult]);
 
   return (
     <div className="fixed inset-0 bg-black z-50 flex flex-col items-center justify-center p-4">
       <h3 className="text-white text-2xl font-black mb-4">Skaner Produktów</h3>
-      <div className="w-full max-w-sm bg-white rounded-2xl overflow-hidden p-2 shadow-[0_0_30px_rgba(0,0,0,0.5)]">
-        {/* Kontener dla nowej biblioteki */}
+      <div className="w-full max-w-sm bg-white rounded-2xl overflow-hidden p-2 shadow-2xl">
         <div id="reader" width="100%"></div>
       </div>
-      <button 
-        onClick={onCancel}
-        className="mt-8 bg-gray-800 text-white px-8 py-4 rounded-2xl font-bold hover:bg-gray-700 transition-colors w-full max-w-sm text-lg"
-      >
-        Zamknij skaner
-      </button>
+      <button onClick={onCancel} className="mt-8 bg-gray-800 text-white px-8 py-4 rounded-2xl font-bold w-full max-w-sm text-lg">Zamknij skaner</button>
     </div>
   );
 };
@@ -87,6 +54,10 @@ export default function Home() {
   const [scannedProduct, setScannedProduct] = useState(null);
   const [portionWeight, setPortionWeight] = useState('');
   
+  const [isAiLoading, setIsAiLoading] = useState(false);
+  const [aiResult, setAiResult] = useState(null);
+  const fileInputRef = useRef(null);
+
   const [history, setHistory] = useState([]);
   const [selectedDate, setSelectedDate] = useState('');
 
@@ -119,37 +90,64 @@ export default function Home() {
 
   const handleLogin = async () => {
     const provider = new GoogleAuthProvider();
-    try { await signInWithPopup(auth, provider); } 
-    catch (error) { alert(`Błąd logowania: ${error.message}`); }
+    try { await signInWithPopup(auth, provider); } catch (error) { alert(`Błąd logowania: ${error.message}`); }
   };
 
   const handleLogout = async () => {
-    try { await signOut(auth); } 
-    catch (error) { console.error("Błąd wylogowania:", error); }
+    try { await signOut(auth); } catch (error) { console.error(error); }
+  };
+
+  const handleAiPhotoTrigger = () => {
+    fileInputRef.current.click();
+  };
+
+  const handlePhotoChange = async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+
+    setIsAiLoading(true);
+    const reader = new FileReader();
+    reader.readAsDataURL(file);
+    reader.onloadend = async () => {
+      const base64Data = reader.result.split(',')[1];
+      try {
+        const response = await fetch('/api/analyze-food', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ imageBase64: base64Data })
+        });
+        const data = await response.json();
+        if (data.error) {
+          alert(`Problem z AI: ${data.error}`);
+        } else {
+          setAiResult(data);
+        }
+      } catch (error) {
+        alert("Błąd połączenia z modułem analizy zdjęć.");
+      } finally {
+        setIsAiLoading(false);
+        e.target.value = ''; 
+      }
+    };
+  };
+
+  const applyAiCalculation = () => {
+    setCarbs(aiResult.carbs.toString());
+    setAiResult(null);
   };
 
   const handleScanResult = async (barcode) => {
     setIsScanning(false);
-    
     try {
       const res = await fetch(`https://world.openfoodfacts.org/api/v0/product/${barcode}.json`);
       const data = await res.json();
-      
       if (data.status === 1) {
         const productName = data.product.product_name || 'Nieznany produkt';
         const carbs100 = data.product.nutriments.carbohydrates_100g;
-        
-        if (carbs100 !== undefined) {
-          setScannedProduct({ name: productName, carbsPer100: carbs100 });
-        } else {
-          alert(`Znaleziono "${productName}", ale brakuje danych o węglowodanach w bazie.`);
-        }
-      } else {
-        alert('Nie znaleziono tego produktu w darmowej bazie Open Food Facts.');
-      }
-    } catch (error) {
-      alert('Błąd połączenia z bazą Open Food Facts.');
-    }
+        if (carbs100 !== undefined) { setScannedProduct({ name: productName, carbsPer100: carbs100 }); } 
+        else { alert(`Znaleziono "${productName}", ale brakuje danych o węglach.`); }
+      } else { alert('Nie znaleziono produktu w bazie Open Food Facts.'); }
+    } catch (error) { alert('Błąd połączenia z bazą danych produktów.'); }
   };
 
   const applyPortionCalculation = () => {
@@ -181,15 +179,12 @@ export default function Home() {
       });
       setCarbs(''); setInsulin(''); setSugar('');
       setEntryDate(getLocalISODate()); setEntryTime(getLocalTime());
-    } catch (error) {
-      alert(`Błąd zapisu: ${error.message}`);
-    }
+    } catch (error) { alert(`Błąd zapisu: ${error.message}`); }
   };
 
   const handleDelete = async (id) => {
     if (window.confirm("Czy na pewno chcesz usunąć ten wpis?")) {
-      try { await deleteDoc(doc(db, "meals", id)); } 
-      catch (error) { alert(`Błąd podczas usuwania: ${error.message}`); }
+      try { await deleteDoc(doc(db, "meals", id)); } catch (error) { alert(`Błąd: ${error.message}`); }
     }
   };
 
@@ -243,6 +238,14 @@ export default function Home() {
   return (
     <div className="max-w-md mx-auto p-4 bg-gray-100 min-h-screen text-gray-900 pb-12">
       {isScanning && <BarcodeScanner onResult={handleScanResult} onCancel={() => setIsScanning(false)} />}
+      
+      {isAiLoading && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex flex-col items-center justify-center text-white p-4">
+          <div className="w-16 h-16 border-4 border-emerald-400 border-t-transparent rounded-full animate-spin mb-6"></div>
+          <p className="font-black text-xl mb-2 text-center">Inteligentna analiza...</p>
+          <p className="text-sm text-gray-300 text-center max-w-xs">AI Gemini rozpoznaje posiłek i szacuje zawartość węglowodanów</p>
+        </div>
+      )}
 
       <div className="flex justify-between items-center mb-4">
         <h2 className="text-2xl font-black text-gray-900 tracking-tight">CukierDziennik</h2>
@@ -258,6 +261,24 @@ export default function Home() {
         <>
           <form onSubmit={handleSubmit} className="space-y-5 bg-white p-5 rounded-2xl shadow-md border border-gray-200 mb-6 relative">
             
+            <input type="file" accept="image/*" capture="environment" ref={fileInputRef} onChange={handlePhotoChange} className="hidden" />
+
+            {aiResult && (
+              <div className="absolute inset-0 bg-white/95 backdrop-blur-sm z-10 p-5 flex flex-col justify-center items-center rounded-2xl border-2 border-emerald-500 text-center animate-fadeIn shadow-2xl">
+                <span className="text-xs font-bold text-emerald-600 uppercase tracking-wider mb-2">Analiza AI zakończona</span>
+                <h3 className="text-lg font-black text-gray-900 mb-4 leading-tight">Rozpoznano:<br/><span className="text-blue-600">{aiResult.product_name}</span></h3>
+                <div className="bg-emerald-50 w-full p-4 rounded-xl mb-6">
+                  <p className="text-sm font-bold text-gray-600 mb-1">Szacowane węglowodany:</p>
+                  <p className="font-black text-emerald-600 text-4xl">{aiResult.carbs}<span className="text-lg text-emerald-400 ml-1">g</span></p>
+                </div>
+                
+                <div className="flex gap-2 w-full">
+                  <button type="button" onClick={() => setAiResult(null)} className="flex-1 bg-gray-200 text-gray-700 font-bold py-4 rounded-xl">Odrzuć</button>
+                  <button type="button" onClick={applyAiCalculation} className="flex-[2] bg-emerald-600 text-white font-bold py-4 rounded-xl shadow-md active:scale-95 transition-transform">Wpisz do formularza</button>
+                </div>
+              </div>
+            )}
+
             {scannedProduct && (
               <div className="absolute inset-0 bg-white/95 backdrop-blur-sm z-10 p-5 flex flex-col justify-center items-center rounded-2xl border-2 border-indigo-500 text-center animate-fadeIn">
                 <span className="text-xs font-bold text-indigo-600 uppercase tracking-wider mb-1">Znaleziono produkt</span>
@@ -265,15 +286,7 @@ export default function Home() {
                 <p className="text-sm font-medium text-gray-600 mb-6">Węglowodany: <span className="font-bold text-indigo-600">{scannedProduct.carbsPer100}g</span> w 100g</p>
                 
                 <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">Ile gramów zjadasz?</label>
-                <input 
-                  type="text" 
-                  inputMode="numeric" 
-                  value={portionWeight} 
-                  onChange={(e) => setPortionWeight(e.target.value)} 
-                  placeholder="np. 150" 
-                  className="w-3/4 text-center text-3xl font-black p-3 bg-gray-100 border-2 border-gray-300 rounded-xl focus:ring-2 focus:ring-indigo-500 text-gray-900 mb-6 outline-none" 
-                  autoFocus
-                />
+                <input type="text" inputMode="numeric" value={portionWeight} onChange={(e) => setPortionWeight(e.target.value)} placeholder="np. 150" className="w-3/4 text-center text-3xl font-black p-3 bg-gray-100 border-2 border-gray-300 rounded-xl focus:ring-2 focus:ring-indigo-500 text-gray-900 mb-6 outline-none" autoFocus />
                 
                 <div className="flex gap-2 w-full">
                   <button type="button" onClick={() => setScannedProduct(null)} className="flex-1 bg-gray-200 text-gray-700 font-bold py-3 rounded-xl">Anuluj</button>
@@ -307,14 +320,13 @@ export default function Home() {
               <input type="text" inputMode="numeric" value={sugar} onChange={(e) => setSugar(e.target.value)} placeholder="np. 124 (opcjonalnie)" className="w-full text-xl font-bold p-3 bg-gray-50 border-2 border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 text-gray-900 outline-none transition-all" />
             </div>
 
-            <div className="py-2 border-y border-gray-100 my-4">
-              <button 
-                type="button" 
-                onClick={() => setIsScanning(true)} 
-                className="w-full bg-indigo-50 border-2 border-indigo-200 text-indigo-700 font-bold py-3.5 rounded-xl shadow-sm flex items-center justify-center gap-3 transition-all active:bg-indigo-100"
-              >
-                <span className="text-2xl">📷</span> 
-                <span className="text-sm uppercase tracking-wider">Skanuj produkt</span>
+            <div className="grid grid-cols-2 gap-2 py-1 my-2">
+              <button type="button" onClick={() => setIsScanning(true)} className="bg-indigo-50 border-2 border-indigo-100 text-indigo-700 font-bold py-3 rounded-xl shadow-sm flex flex-col items-center justify-center gap-1 transition-all active:bg-indigo-100">
+                <span className="text-xl">📊</span> <span className="text-[10px] uppercase tracking-wider">Skanuj kod</span>
+              </button>
+              
+              <button type="button" onClick={handleAiPhotoTrigger} className="bg-emerald-50 border-2 border-emerald-100 text-emerald-700 font-bold py-3 rounded-xl shadow-sm flex flex-col items-center justify-center gap-1 transition-all active:bg-emerald-100">
+                <span className="text-xl">📸</span> <span className="text-[10px] uppercase tracking-wider">Foto (AI)</span>
               </button>
             </div>
 
