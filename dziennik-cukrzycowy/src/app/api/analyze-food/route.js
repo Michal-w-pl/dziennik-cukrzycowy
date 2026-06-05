@@ -10,10 +10,9 @@ export async function POST(request) {
 
     const apiKey = process.env.GEMINI_API_KEY;
     if (!apiKey) {
-      return NextResponse.json({ error: "Brak klucza API" }, { status: 500 });
+      return NextResponse.json({ error: "Serwer nie widzi klucza GEMINI_API_KEY. Wykonaj redeploy na Vercelu." }, { status: 500 });
     }
 
-    // Tekst podzielony na kawałki za pomocą +, aby edytor kodu nie "złamał" linijki i nie zepsuł aplikacji
     const promptText = "Przeanalizuj to zdjęcie posiłku dla osoby z cukrzycą. " +
       "Rozpoznaj co jest na talerzu i oszacuj łączną zawartość węglowodanów w gramach " +
       "dla całego widocznego posiłku. Odpowiedz BEZWZGLĘDNIE wyłącznie w formacie JSON " +
@@ -42,6 +41,15 @@ export async function POST(request) {
 
     const data = await response.json();
     
+    // DIAGNOSTYKA: Jeśli Google zwróci błąd (np. INVALID_ARGUMENT / API_KEY_INVALID)
+    if (data.error) {
+      return NextResponse.json({ error: `Błąd Google Gemini: ${data.error.message} (${data.error.status})` }, { status: 500 });
+    }
+
+    if (!data.candidates || data.candidates.length === 0) {
+      return NextResponse.json({ error: "Gemini nie zwróciło wyników. Spróbuj zrobić zdjęcie z innego kąta." }, { status: 500 });
+    }
+
     const aiTextResponse = data.candidates[0].content.parts[0].text;
     const foodAnalysis = JSON.parse(aiTextResponse);
 
@@ -49,6 +57,6 @@ export async function POST(request) {
 
   } catch (error) {
     console.error("Błąd API Route:", error);
-    return NextResponse.json({ error: "Błąd podczas przetwarzania obrazu przez AI" }, { status: 500 });
+    return NextResponse.json({ error: `Szczegóły błędu serwera: ${error.message}` }, { status: 500 });
   }
 }
