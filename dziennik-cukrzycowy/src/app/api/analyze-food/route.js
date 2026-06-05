@@ -20,8 +20,9 @@ export async function POST(request) {
       "'product_name' (krótki opis rozpoznanego posiłku po polsku) oraz 'carbs' " +
       "(szacowana liczba węglowodanów w gramach jako liczba, np. 45.5). Staraj się być precyzyjny.";
 
+    // ZMIANA TUTAJ: Używamy najnowszego, aktywnego modelu gemini-3.5-flash
     const response = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`,
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent?key=${apiKey}`,
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -41,7 +42,6 @@ export async function POST(request) {
 
     const data = await response.json();
     
-    // DIAGNOSTYKA: Jeśli Google zwróci błąd (np. INVALID_ARGUMENT / API_KEY_INVALID)
     if (data.error) {
       return NextResponse.json({ error: `Błąd Google Gemini: ${data.error.message} (${data.error.status})` }, { status: 500 });
     }
