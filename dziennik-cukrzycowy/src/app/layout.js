@@ -11,14 +11,21 @@ const geistMono = Geist_Mono({
   subsets: ["latin"],
 });
 
+export const viewport = {
+  themeColor: "#2563eb",
+  width: "device-width",
+  initialScale: 1,
+  maximumScale: 1,
+};
+
 export const metadata = {
   title: "Dziennik Cukrzycowy",
-  description: "Aplikacja do szybkiego prowadzenia dziennika glekemii i posiłków",
+  description: "Inteligentny dziennik dla cukrzyka",
   manifest: "/manifest.json",
   appleWebApp: {
     capable: true,
     statusBarStyle: "default",
-    title: "Cukrzyca",
+    title: "CukierDziennik",
   },
 };
 
