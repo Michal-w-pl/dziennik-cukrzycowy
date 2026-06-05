@@ -115,7 +115,7 @@ export default function Home() {
   const handleLogin = async () => {
     const provider = new GoogleAuthProvider();
     try { 
-      // Zmieniamy logowanie na bezpieczne przekierowanie całej strony
+      // Zmienione na bezpieczne logowanie z przekierowaniem strony dla PWA
       await signInWithRedirect(auth, provider); 
     } catch (error) { 
       alert(`Błąd logowania: ${error.message}`); 
@@ -228,7 +228,7 @@ export default function Home() {
     }
   };
 
-  // Funkcja generująca PDF
+  // Funkcja generująca zaktualizowany PDF
   const generatePDF = () => {
     const doc = new jsPDF();
     
@@ -238,7 +238,7 @@ export default function Home() {
       return text.toString().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/ł/g, "l").replace(/Ł/g, "L");
     };
 
-    // Filtrujemy historię według wybranych dat i odwracamy chronologicznie (od najstarszego do najnowszego)
+    // Filtrujemy historię według wybranych dat i odwracamy chronologicznie
     const filteredForPDF = history.filter(item => {
       const itemDate = new Date(item.timestamp).toISOString().split('T')[0];
       return itemDate >= reportStart && itemDate <= reportEnd;
@@ -252,12 +252,19 @@ export default function Home() {
     doc.setFontSize(16);
     doc.text(`Raport Cukrzycowy (${reportStart} do ${reportEnd})`, 14, 15);
 
+    // --- 1. GŁÓWNA TABELA Z WPISAMI ---
     const tableColumn = ["Data i Czas", "Pora", "Cukier", "Weglowodany", "Insulina", "Uwagi"];
     const tableRows = [];
 
+    // Obiekt do zbierania sum dziennych
+    const dailyTotals = {};
+
     filteredForPDF.forEach(item => {
+      const dateLabel = formatDateLabel(item.timestamp);
+      
+      // Dodawanie wiersza do głównej tabeli
       const rowData = [
-        normalize(`${formatDateLabel(item.timestamp)} ${formatTime(item.timestamp)}`),
+        normalize(`${dateLabel} ${formatTime(item.timestamp)}`),
         normalize(item.mealType),
         item.sugar ? `${item.sugar} mg/dl` : '-',
         `${item.carbs} g`,
@@ -265,6 +272,13 @@ export default function Home() {
         normalize(item.notes || '')
       ];
       tableRows.push(rowData);
+
+      // Zbieranie danych do podsumowania dziennego
+      if (!dailyTotals[dateLabel]) {
+        dailyTotals[dateLabel] = { carbs: 0, insulin: 0 };
+      }
+      dailyTotals[dateLabel].carbs += (Number(item.carbs) || 0);
+      dailyTotals[dateLabel].insulin += (Number(item.insulin) || 0);
     });
 
     autoTable(doc, {
@@ -272,9 +286,47 @@ export default function Home() {
       body: tableRows,
       startY: 20,
       styles: { fontSize: 9 },
-      headStyles: { fillColor: [37, 99, 235] }, // Kolor blue-600
-      columnStyles: { 5: { cellWidth: 50 } } // Szersza kolumna dla uwag
+      headStyles: { fillColor: [37, 99, 235] }, // Niebieski nagłówek
+      columnStyles: { 5: { cellWidth: 50 } }
     });
+
+    // --- 2. TABELA PODSUMOWANIA DZIENNEGO ---
+    const summaryColumn = ["Data", "Suma Weglowodanow", "Suma Insuliny"];
+    const summaryRows = [];
+    
+    Object.keys(dailyTotals).forEach(date => {
+      summaryRows.push([
+        normalize(date),
+        `${dailyTotals[date].carbs.toFixed(1)} g`,
+        `${dailyTotals[date].insulin.toFixed(1)} j.`
+      ]);
+    });
+
+    // Pobieramy pozycję Y, w której skończyła się pierwsza tabela
+    const finalY = doc.lastAutoTable.finalY || 20;
+
+    // Rysujemy tytuł dla podsumowania (zabezpieczenie przed brakiem miejsca na stronie)
+    if (finalY > 250) {
+      doc.addPage();
+      doc.text("Podsumowanie dzienne", 14, 20);
+      autoTable(doc, {
+        head: [summaryColumn],
+        body: summaryRows,
+        startY: 25,
+        styles: { fontSize: 10, halign: 'center' },
+        headStyles: { fillColor: [16, 185, 129] }, // Zielony nagłówek dla odróżnienia
+      });
+    } else {
+      doc.setFontSize(14);
+      doc.text("Podsumowanie dzienne", 14, finalY + 15);
+      autoTable(doc, {
+        head: [summaryColumn],
+        body: summaryRows,
+        startY: finalY + 20,
+        styles: { fontSize: 10, halign: 'center' },
+        headStyles: { fillColor: [16, 185, 129] },
+      });
+    }
 
     doc.save(`Raport_Cukrzycowy_${reportStart}_${reportEnd}.pdf`);
   };
@@ -485,7 +537,6 @@ export default function Home() {
       {activeTab === 'reports' && (
         <div className="space-y-6 animate-fadeIn">
           
-          {/* NOWA SEKCJA: Generator PDF */}
           <div className="bg-white p-5 rounded-2xl border border-gray-200 shadow-md">
             <h3 className="text-sm font-black text-gray-800 uppercase tracking-wider mb-4 flex items-center gap-2">
               <span className="text-xl">📄</span> Raport dla lekarza
