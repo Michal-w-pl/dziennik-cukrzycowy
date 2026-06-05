@@ -15,13 +15,51 @@ const getLocalTime = () => {
   return new Date().toLocaleTimeString('pl-PL', { hour: '2-digit', minute: '2-digit' });
 };
 
-// NOWY WYGLĄD SKANERA: Kwadratowy celownik, czerwony laser i instrukcja ostrzenia
+// NOWY WYGLĄD SKANERA: Kwadratowy celownik i wymuszenie wysokiej rozdzielczości
 const BarcodeScanner = ({ onResult, onCancel }) => {
   const { ref } = useZxing({
     onDecodeResult(result) {
       onResult(result.getText());
     },
+    // NOWOŚĆ: Wymuszamy na przeglądarce lepszą jakość wideo i autofocus
+    constraints: {
+      video: {
+        facingMode: "environment", // Bezwzględnie tylna kamera
+        width: { min: 640, ideal: 1280, max: 1920 }, // Wyższa rozdzielczość to ostrzejszy kod
+        height: { min: 480, ideal: 720, max: 1080 },
+        advanced: [{ focusMode: "continuous" }] // Próba wymuszenia autofocusa
+      }
+    }
   });
+
+  return (
+    <div className="fixed inset-0 bg-black z-50 flex flex-col items-center justify-center p-4">
+      <h3 className="text-white text-2xl font-black mb-2">Skaner Produktów</h3>
+      <p className="text-gray-300 text-sm font-medium mb-8 text-center max-w-xs">
+        Odsuń telefon na ok. <span className="text-blue-400 font-bold">15-20 cm</span> od kodu, aby aparat mógł wyostrzyć obraz. Zadbaj o dobre światło.
+      </p>
+      
+      <div className="w-full max-w-sm aspect-square rounded-3xl overflow-hidden border-2 border-gray-600 relative bg-gray-900 flex items-center justify-center shadow-[0_0_30px_rgba(0,0,0,0.5)]">
+        <video ref={ref} className="w-full h-full object-cover" />
+        
+        {/* Czerwona linia lasera */}
+        <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+          <div className="w-3/4 h-0.5 bg-red-500 shadow-[0_0_10px_rgba(239,68,68,1)] opacity-70"></div>
+        </div>
+        
+        {/* Nakładka przyciemniająca brzegi */}
+        <div className="absolute inset-0 border-[40px] border-black/50 pointer-events-none"></div>
+      </div>
+      
+      <button 
+        onClick={onCancel}
+        className="mt-12 bg-gray-800 text-white px-8 py-4 rounded-2xl font-bold hover:bg-gray-700 transition-colors w-full max-w-sm text-lg"
+      >
+        Zamknij skaner
+      </button>
+    </div>
+  );
+};
 
   return (
     <div className="fixed inset-0 bg-black z-50 flex flex-col items-center justify-center p-4">
