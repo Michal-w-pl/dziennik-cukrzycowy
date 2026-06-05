@@ -1,10 +1,11 @@
 'use client';
-import { collection, addDoc, query, orderBy, onSnapshot, deleteDoc, doc } from "firebase/firestore";
+import { collection, addDoc, query, orderBy, onSnapshot, deleteDoc, doc, where } from "firebase/firestore";
 import { signInWithPopup, GoogleAuthProvider, signOut, onAuthStateChanged } from "firebase/auth";
 import { db, auth } from "./firebase";
 import { useState, useEffect, useRef } from 'react';
 import { ComposedChart, Line, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine, Legend } from 'recharts';
 import { Html5QrcodeScanner } from 'html5-qrcode';
+import VoiceInput from "@/components/VoiceInput";
 
 const getLocalISODate = () => {
   const tzoffset = (new Date()).getTimezoneOffset() * 60000;
@@ -45,6 +46,7 @@ export default function Home() {
   const [entryDate, setEntryDate] = useState('');
   const [entryTime, setEntryTime] = useState('');
 
+  const [mealNotes, setMealNotes] = useState('');
   const [carbs, setCarbs] = useState('');
   const [insulin, setInsulin] = useState('');
   const [sugar, setSugar] = useState('');
@@ -79,12 +81,22 @@ export default function Home() {
 
   useEffect(() => {
     if (!user) return;
-    const q = query(collection(db, "meals"), orderBy("timestamp", "desc"));
+    
+    // Zapytanie z filtrowaniem bezpieczeństwa - pobiera tylko wpisy zalogowanej osoby
+    const q = query(
+      collection(db, "meals"), 
+      where("userEmail", "==", user.email),
+      orderBy("timestamp", "desc")
+    );
+    
     const unsubscribe = onSnapshot(q, (querySnapshot) => {
       const mealsArray = [];
       querySnapshot.forEach((document) => mealsArray.push({ id: document.id, ...document.data() }));
       setHistory(mealsArray);
+    }, (error) => {
+      console.error("Błąd pobierania historii. Prawdopodobnie brak indeksu Firebase:", error);
     });
+    
     return () => unsubscribe();
   }, [user]);
 
@@ -133,6 +145,7 @@ export default function Home() {
 
   const applyAiCalculation = () => {
     setCarbs(aiResult.carbs.toString());
+    setMealNotes(aiResult.product_name);
     setAiResult(null);
   };
 
@@ -155,8 +168,26 @@ export default function Home() {
     if (!weight || weight <= 0) return;
     const calculatedCarbs = (scannedProduct.carbsPer100 * weight) / 100;
     setCarbs(calculatedCarbs.toFixed(1));
+    setMealNotes((prev) => prev ? `${prev}, ${scannedProduct.name}` : scannedProduct.name);
     setScannedProduct(null);
     setPortionWeight('');
+  };
+
+  const handleVoiceData = (aiData) => {
+    if (aiData.skladniki && aiData.skladniki.length > 0) {
+      const parsedText = aiData.skladniki
+        .map((item) => `${item.ilosc} ${item.jednostka} ${item.nazwa}`)
+        .join(", ");
+      
+      setMealNotes((prev) => prev ? `${prev}, ${parsedText}` : parsedText);
+
+      // Zliczanie węglowodanów oszacowanych przez Gemini AI
+      const totalCarbs = aiData.skladniki.reduce((sum, item) => sum + (item.szacowane_weglowodany || 0), 0);
+      
+      if (totalCarbs > 0) {
+        setCarbs(totalCarbs.toFixed(1).toString());
+      }
+    }
   };
 
   const handleSubmit = async (e) => {
@@ -174,10 +205,11 @@ export default function Home() {
         insulin: parseFloat(safeInsulin),
         sugar: safeSugar ? parseFloat(safeSugar) : null,
         mealType,
+        notes: mealNotes,
         timestamp: combinedDateTime.toISOString(),
         userEmail: user.email 
       });
-      setCarbs(''); setInsulin(''); setSugar('');
+      setCarbs(''); setInsulin(''); setSugar(''); setMealNotes('');
       setEntryDate(getLocalISODate()); setEntryTime(getLocalTime());
     } catch (error) { alert(`Błąd zapisu: ${error.message}`); }
   };
@@ -320,6 +352,18 @@ export default function Home() {
               <input type="text" inputMode="numeric" value={sugar} onChange={(e) => setSugar(e.target.value)} placeholder="np. 124 (opcjonalnie)" className="w-full text-xl font-bold p-3 bg-gray-50 border-2 border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 text-gray-900 outline-none transition-all" />
             </div>
 
+            <div className="bg-gray-50 p-3 rounded-xl border border-gray-200">
+              <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1.5">Co jesz? (Podyktuj lub wpisz)</label>
+              <textarea 
+                value={mealNotes} 
+                onChange={(e) => setMealNotes(e.target.value)} 
+                placeholder="np. kanapka z serem, 2 pomidory..." 
+                className="w-full text-sm font-medium p-3 bg-white border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none mb-3" 
+                rows="2"
+              ></textarea>
+              <VoiceInput onIngredientsParsed={handleVoiceData} />
+            </div>
+
             <div className="grid grid-cols-2 gap-2 py-1 my-2">
               <button type="button" onClick={() => setIsScanning(true)} className="bg-indigo-50 border-2 border-indigo-100 text-indigo-700 font-bold py-3 rounded-xl shadow-sm flex flex-col items-center justify-center gap-1 transition-all active:bg-indigo-100">
                 <span className="text-xl">📊</span> <span className="text-[10px] uppercase tracking-wider">Skanuj kod</span>
@@ -373,7 +417,10 @@ export default function Home() {
                     <div className="flex-1">
                       <span className="text-xs font-bold text-blue-500 uppercase tracking-wider">{formatTime(item.timestamp)} - {item.mealType}</span>
                       {item.sugar && <div className="mt-0.5"><span className="inline-block bg-red-50 text-red-600 text-xs font-black px-2 py-0.5 rounded-md border border-red-100">Cukier: {item.sugar} mg/dl</span></div>}
-                      <div className="text-base font-bold text-gray-900 mt-0.5">Węglowodany: <span className="text-blue-600">{item.carbs}g</span></div>
+                      
+                      {item.notes && <div className="text-sm font-medium text-gray-700 mt-1 italic">{item.notes}</div>}
+                      
+                      <div className="text-base font-bold text-gray-900 mt-1">Węglowodany: <span className="text-blue-600">{item.carbs}g</span></div>
                     </div>
                     <div className="flex flex-col items-end justify-between ml-2">
                       <div className="text-right">
