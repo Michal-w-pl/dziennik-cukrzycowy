@@ -4,7 +4,7 @@ import { signInWithPopup, GoogleAuthProvider, signOut, onAuthStateChanged } from
 import { db, auth } from "./firebase";
 import { useState, useEffect } from 'react';
 import { ComposedChart, Line, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine, Legend } from 'recharts';
-import { useZxing } from "react-zxing"; // NOWOŚĆ: Import skanera
+import { useZxing } from "react-zxing";
 
 const getLocalISODate = () => {
   const tzoffset = (new Date()).getTimezoneOffset() * 60000;
@@ -15,7 +15,7 @@ const getLocalTime = () => {
   return new Date().toLocaleTimeString('pl-PL', { hour: '2-digit', minute: '2-digit' });
 };
 
-// NOWOŚĆ: Wydzielony komponent do obsługi kamery
+// NOWY WYGLĄD SKANERA: Kwadratowy celownik, czerwony laser i instrukcja ostrzenia
 const BarcodeScanner = ({ onResult, onCancel }) => {
   const { ref } = useZxing({
     onDecodeResult(result) {
@@ -24,20 +24,29 @@ const BarcodeScanner = ({ onResult, onCancel }) => {
   });
 
   return (
-    <div className="fixed inset-0 bg-black/90 z-50 flex flex-col items-center justify-center p-4">
-      <p className="text-white font-bold mb-4 animate-pulse">Nakieruj aparat na kod kreskowy...</p>
-      <div className="w-full max-w-sm rounded-2xl overflow-hidden border-4 border-blue-500 shadow-2xl relative">
-        <video ref={ref} className="w-full h-auto object-cover" />
-        {/* Celownik */}
+    <div className="fixed inset-0 bg-black z-50 flex flex-col items-center justify-center p-4">
+      <h3 className="text-white text-2xl font-black mb-2">Skaner Produktów</h3>
+      <p className="text-gray-300 text-sm font-medium mb-8 text-center max-w-xs">
+        Odsuń telefon na ok. <span className="text-blue-400 font-bold">15-20 cm</span> od kodu, aby aparat mógł wyostrzyć obraz.
+      </p>
+      
+      <div className="w-full max-w-sm aspect-square rounded-3xl overflow-hidden border-2 border-gray-600 relative bg-gray-900 flex items-center justify-center shadow-[0_0_30px_rgba(0,0,0,0.5)]">
+        <video ref={ref} className="w-full h-full object-cover" />
+        
+        {/* Czerwona linia lasera */}
         <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-          <div className="w-3/4 h-1/3 border-2 border-red-500/50 rounded-lg"></div>
+          <div className="w-3/4 h-0.5 bg-red-500 shadow-[0_0_10px_rgba(239,68,68,1)] opacity-70"></div>
         </div>
+        
+        {/* Nakładka przyciemniająca brzegi (focus na środek) */}
+        <div className="absolute inset-0 border-[40px] border-black/50 pointer-events-none"></div>
       </div>
+      
       <button 
         onClick={onCancel}
-        className="mt-8 bg-gray-800 text-white px-8 py-3 rounded-xl font-bold hover:bg-gray-700 transition-colors"
+        className="mt-12 bg-gray-800 text-white px-8 py-4 rounded-2xl font-bold hover:bg-gray-700 transition-colors w-full max-w-sm text-lg"
       >
-        Anuluj skanowanie
+        Zamknij skaner
       </button>
     </div>
   );
@@ -56,7 +65,6 @@ export default function Home() {
   const [sugar, setSugar] = useState('');
   const [mealType, setMealType] = useState('Obiad');
   
-  // NOWOŚĆ: Stany dla Skanera i Przelicznika
   const [isScanning, setIsScanning] = useState(false);
   const [scannedProduct, setScannedProduct] = useState(null);
   const [portionWeight, setPortionWeight] = useState('');
@@ -102,9 +110,8 @@ export default function Home() {
     catch (error) { console.error("Błąd wylogowania:", error); }
   };
 
-  // --- LOGIKA SKANERA I API OPEN FOOD FACTS ---
   const handleScanResult = async (barcode) => {
-    setIsScanning(false); // Zamykamy kamerę
+    setIsScanning(false);
     
     try {
       const res = await fetch(`https://world.openfoodfacts.org/api/v0/product/${barcode}.json`);
@@ -115,7 +122,6 @@ export default function Home() {
         const carbs100 = data.product.nutriments.carbohydrates_100g;
         
         if (carbs100 !== undefined) {
-          // Produkt znaleziony i ma dane o węglach - otwieramy kalkulator porcji
           setScannedProduct({ name: productName, carbsPer100: carbs100 });
         } else {
           alert(`Znaleziono "${productName}", ale brakuje danych o węglowodanach w bazie.`);
@@ -131,15 +137,11 @@ export default function Home() {
   const applyPortionCalculation = () => {
     const weight = parseFloat(portionWeight.replace(',', '.'));
     if (!weight || weight <= 0) return;
-    
-    // Przeliczamy: (węgle_w_100g * podana_waga) / 100
     const calculatedCarbs = (scannedProduct.carbsPer100 * weight) / 100;
-    
-    setCarbs(calculatedCarbs.toFixed(1)); // Wrzucamy gotowy wynik do głównego formularza
-    setScannedProduct(null); // Zamykamy kalkulator
+    setCarbs(calculatedCarbs.toFixed(1));
+    setScannedProduct(null);
     setPortionWeight('');
   };
-  // ---------------------------------------------
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -222,7 +224,6 @@ export default function Home() {
 
   return (
     <div className="max-w-md mx-auto p-4 bg-gray-100 min-h-screen text-gray-900 pb-12">
-      {/* Renderowanie podglądu z kamery na pełnym ekranie (gdy aktywny) */}
       {isScanning && <BarcodeScanner onResult={handleScanResult} onCancel={() => setIsScanning(false)} />}
 
       <div className="flex justify-between items-center mb-4">
@@ -239,12 +240,11 @@ export default function Home() {
         <>
           <form onSubmit={handleSubmit} className="space-y-5 bg-white p-5 rounded-2xl shadow-md border border-gray-200 mb-6 relative">
             
-            {/* NOWOŚĆ: Półprzezroczysta nakładka z wynikiem skanowania */}
             {scannedProduct && (
-              <div className="absolute inset-0 bg-white/95 backdrop-blur-sm z-10 p-5 flex flex-col justify-center items-center rounded-2xl border-2 border-blue-500 text-center animate-fadeIn">
-                <span className="text-xs font-bold text-blue-600 uppercase tracking-wider mb-1">Znaleziono produkt</span>
+              <div className="absolute inset-0 bg-white/95 backdrop-blur-sm z-10 p-5 flex flex-col justify-center items-center rounded-2xl border-2 border-indigo-500 text-center animate-fadeIn">
+                <span className="text-xs font-bold text-indigo-600 uppercase tracking-wider mb-1">Znaleziono produkt</span>
                 <h3 className="text-lg font-black text-gray-900 mb-2 leading-tight">{scannedProduct.name}</h3>
-                <p className="text-sm font-medium text-gray-600 mb-6">Węglowodany: <span className="font-bold text-blue-600">{scannedProduct.carbsPer100}g</span> w 100g</p>
+                <p className="text-sm font-medium text-gray-600 mb-6">Węglowodany: <span className="font-bold text-indigo-600">{scannedProduct.carbsPer100}g</span> w 100g</p>
                 
                 <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">Ile gramów zjadasz?</label>
                 <input 
@@ -253,13 +253,13 @@ export default function Home() {
                   value={portionWeight} 
                   onChange={(e) => setPortionWeight(e.target.value)} 
                   placeholder="np. 150" 
-                  className="w-3/4 text-center text-3xl font-black p-3 bg-gray-100 border-2 border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 text-gray-900 mb-6 outline-none" 
+                  className="w-3/4 text-center text-3xl font-black p-3 bg-gray-100 border-2 border-gray-300 rounded-xl focus:ring-2 focus:ring-indigo-500 text-gray-900 mb-6 outline-none" 
                   autoFocus
                 />
                 
                 <div className="flex gap-2 w-full">
                   <button type="button" onClick={() => setScannedProduct(null)} className="flex-1 bg-gray-200 text-gray-700 font-bold py-3 rounded-xl">Anuluj</button>
-                  <button type="button" onClick={applyPortionCalculation} className="flex-1 bg-blue-600 text-white font-bold py-3 rounded-xl shadow-md">Przelicz</button>
+                  <button type="button" onClick={applyPortionCalculation} className="flex-1 bg-indigo-600 text-white font-bold py-3 rounded-xl shadow-md">Przelicz</button>
                 </div>
               </div>
             )}
@@ -289,15 +289,21 @@ export default function Home() {
               <input type="text" inputMode="numeric" value={sugar} onChange={(e) => setSugar(e.target.value)} placeholder="np. 124 (opcjonalnie)" className="w-full text-xl font-bold p-3 bg-gray-50 border-2 border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 text-gray-900 outline-none transition-all" />
             </div>
 
+            {/* ZMIENIONY, DUŻY PRZYCISK SKANERA */}
+            <div className="py-2 border-y border-gray-100 my-4">
+              <button 
+                type="button" 
+                onClick={() => setIsScanning(true)} 
+                className="w-full bg-indigo-50 border-2 border-indigo-200 text-indigo-700 font-bold py-3.5 rounded-xl shadow-sm flex items-center justify-center gap-3 transition-all active:bg-indigo-100"
+              >
+                <span className="text-2xl">📷</span> 
+                <span className="text-sm uppercase tracking-wider">Skanuj produkt</span>
+              </button>
+            </div>
+
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <div className="flex justify-between items-end mb-1.5">
-                  <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider">Węglowodany</label>
-                  {/* NOWOŚĆ: Mały przycisk skanera nad polem węglowodanów */}
-                  <button type="button" onClick={() => setIsScanning(true)} className="text-[10px] bg-blue-100 text-blue-700 font-bold px-2 py-1 rounded-md active:bg-blue-200 transition-colors flex items-center gap-1">
-                    📷 SKANUJ KOD
-                  </button>
-                </div>
+                <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1.5">Węglowodany (g)</label>
                 <input type="text" inputMode="decimal" value={carbs} onChange={(e) => setCarbs(e.target.value)} placeholder="np. 45" className="w-full text-xl font-bold p-3 bg-gray-50 border-2 border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 text-gray-900 outline-none transition-all" required />
               </div>
               <div>
@@ -311,7 +317,6 @@ export default function Home() {
             </button>
           </form>
 
-          {/* ... reszta wyświetlania Dziennika pozostaje bez zmian ... */}
           <div className="mb-4 bg-white p-3 rounded-2xl border border-gray-200 shadow-sm flex items-center justify-between">
             <label className="text-xs font-bold text-gray-500 uppercase tracking-wider">Przeglądaj dzień:</label>
             <input type="date" value={selectedDate} onChange={(e) => setSelectedDate(e.target.value)} className="bg-gray-50 border border-gray-200 text-gray-900 text-sm font-bold rounded-xl p-2 outline-none focus:ring-2 focus:ring-blue-500" />
@@ -356,7 +361,6 @@ export default function Home() {
         </>
       )}
 
-      {/* ... Sekcja Raportów ... */}
       {activeTab === 'reports' && (
         <div className="space-y-6 animate-fadeIn">
           <div className="bg-white p-4 rounded-2xl border border-gray-200 shadow-md">
