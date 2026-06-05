@@ -10,7 +10,7 @@ export async function POST(request) {
 
     const apiKey = process.env.GEMINI_API_KEY;
     if (!apiKey) {
-      return NextResponse.json({ error: "Serwer nie widzi klucza GEMINI_API_KEY. Wykonaj redeploy na Vercelu." }, { status: 500 });
+      return NextResponse.json({ error: "Brak klucza API w konfiguracji serwera." }, { status: 500 });
     }
 
     const promptText = "Przeanalizuj to zdjęcie posiłku dla osoby z cukrzycą. " +
@@ -20,30 +20,55 @@ export async function POST(request) {
       "'product_name' (krótki opis rozpoznanego posiłku po polsku) oraz 'carbs' " +
       "(szacowana liczba węglowodanów w gramach jako liczba, np. 45.5). Staraj się być precyzyjny.";
 
-    // ZMIANA TUTAJ: Używamy najnowszego, aktywnego modelu gemini-3.5-flash
-    const response = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent?key=${apiKey}`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          contents: [{
-            parts: [
-              { text: promptText },
-              { inlineData: { mimeType: "image/jpeg", data: imageBase64 } }
-            ]
-          }],
-          generationConfig: {
-            responseMimeType: "application/json"
-          }
-        })
-      }
-    );
+    let data;
+    let success = false;
+    let lastError = null;
 
-    const data = await response.json();
-    
-    if (data.error) {
-      return NextResponse.json({ error: `Błąd Google Gemini: ${data.error.message} (${data.error.status})` }, { status: 500 });
+    // NOWOŚĆ: Pętla próbująca wysłać zapytanie do 3 razy
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      const response = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent?key=${apiKey}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            contents: [{
+              parts: [
+                { text: promptText },
+                { inlineData: { mimeType: "image/jpeg", data: imageBase64 } }
+              ]
+            }],
+            generationConfig: {
+              responseMimeType: "application/json"
+            }
+          })
+        }
+      );
+
+      data = await response.json();
+
+      // Jeśli serwer jest przeciążony (503 UNAVAILABLE), czekamy i próbujemy ponownie
+      if (data.error && data.error.status === 'UNAVAILABLE') {
+        lastError = data.error;
+        console.warn(`Próba ${attempt} odrzucona przez Google. Czekam 1.5s...`);
+        // Czekamy 1.5 sekundy przed kolejną próbą
+        await new Promise(resolve => setTimeout(resolve, 1500));
+        continue; 
+      }
+
+      // Jeśli to inny, twardy błąd (np. zły klucz), przerywamy od razu
+      if (data.error) {
+        return NextResponse.json({ error: `Błąd Google Gemini: ${data.error.message}` }, { status: 500 });
+      }
+
+      // Udało się!
+      success = true;
+      break; 
+    }
+
+    // Jeśli po 3 próbach nadal jest tłok
+    if (!success) {
+      return NextResponse.json({ error: "Serwery AI są w tej chwili wyjątkowo przeciążone. Spróbuj ponownie za kilka sekund." }, { status: 503 });
     }
 
     if (!data.candidates || data.candidates.length === 0) {
