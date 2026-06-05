@@ -10,10 +10,17 @@ export async function POST(request) {
 
     const apiKey = process.env.GEMINI_API_KEY;
     if (!apiKey) {
-      return NextResponse.json({ error: "Serwer nie został skonfigurowany (brak klucza API)" }, { status: 500 });
+      return NextResponse.json({ error: "Brak klucza API" }, { status: 500 });
     }
 
-    // Konstruujemy zapytanie do darmowego modelu Gemini 1.5 Flash
+    // Tekst podzielony na kawałki za pomocą +, aby edytor kodu nie "złamał" linijki i nie zepsuł aplikacji
+    const promptText = "Przeanalizuj to zdjęcie posiłku dla osoby z cukrzycą. " +
+      "Rozpoznaj co jest na talerzu i oszacuj łączną zawartość węglowodanów w gramach " +
+      "dla całego widocznego posiłku. Odpowiedz BEZWZGLĘDNIE wyłącznie w formacie JSON " +
+      "(bez żadnego formatowania markdown), używając następujących kluczy: " +
+      "'product_name' (krótki opis rozpoznanego posiłku po polsku) oraz 'carbs' " +
+      "(szacowana liczba węglowodanów w gramach jako liczba, np. 45.5). Staraj się być precyzyjny.";
+
     const response = await fetch(
       `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`,
       {
@@ -22,8 +29,26 @@ export async function POST(request) {
         body: JSON.stringify({
           contents: [{
             parts: [
-              {
-                text: "Przeanalizuj to zdjęcie posiłku dla osoby z cukrzycą. Rozpoznaj co jest na talerzu i oszacuj łączną zawartość węglowodanów w gramach dla całego widocznego posiłku. Odpowiedz BEZWZGLĘDNIE wyłącznie w formacie JSON (bez żadnego formatowania markdown, bez 
-http://googleusercontent.com/immersive_entry_chip/0
+              { text: promptText },
+              { inlineData: { mimeType: "image/jpeg", data: imageBase64 } }
+            ]
+          }],
+          generationConfig: {
+            responseMimeType: "application/json"
+          }
+        })
+      }
+    );
 
-Po zakończeniu budowania przez Vercel, odśwież aplikację w telefonie. Przyciski skanera i aparatu ułożyły się w równe, czytelne kafelki. Kliknij zielony kafelek, zrób zdjęcie dowolnego posiłku i zobacz, jak sztuczna inteligencja bezbłędnie rozpisze Twój talerz!
+    const data = await response.json();
+    
+    const aiTextResponse = data.candidates[0].content.parts[0].text;
+    const foodAnalysis = JSON.parse(aiTextResponse);
+
+    return NextResponse.json(foodAnalysis);
+
+  } catch (error) {
+    console.error("Błąd API Route:", error);
+    return NextResponse.json({ error: "Błąd podczas przetwarzania obrazu przez AI" }, { status: 500 });
+  }
+}
