@@ -4,7 +4,7 @@ import { signInWithPopup, GoogleAuthProvider, signOut, onAuthStateChanged } from
 import { db, auth } from "./firebase";
 import { useState, useEffect } from 'react';
 import { ComposedChart, Line, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine, Legend } from 'recharts';
-import { useZxing } from "react-zxing";
+import { Html5QrcodeScanner } from 'html5-qrcode'; // NOWA, POTĘŻNA BIBLIOTEKA
 
 const getLocalISODate = () => {
   const tzoffset = (new Date()).getTimezoneOffset() * 60000;
@@ -15,44 +15,54 @@ const getLocalTime = () => {
   return new Date().toLocaleTimeString('pl-PL', { hour: '2-digit', minute: '2-digit' });
 };
 
-// Zaktualizowany skaner z wymuszeniem HD i ciągłego autofocusa
+// NOWY KOMPONENT SKANERA (html5-qrcode)
 const BarcodeScanner = ({ onResult, onCancel }) => {
-  const { ref } = useZxing({
-    onDecodeResult(result) {
-      onResult(result.getText());
-    },
-    constraints: {
-      video: {
-        facingMode: "environment", // Wymuszenie tylnej kamery
-        width: { min: 640, ideal: 1280, max: 1920 }, // Wymuszenie wyższej rozdzielczości HD
-        height: { min: 480, ideal: 720, max: 1080 },
-        advanced: [{ focusMode: "continuous" }] // Próba wymuszenia autofocusa w przeglądarce
+  useEffect(() => {
+    // Konfiguracja skanera zoptymalizowana pod kody kreskowe produktów (prostokątne)
+    const scanner = new Html5QrcodeScanner(
+      "reader",
+      { 
+        fps: 10, 
+        qrbox: { width: 250, height: 120 },
+        aspectRatio: 1.0,
+        formatsToSupport: [ 
+            0, // CODE_128
+            1, // CODE_39
+            8, // EAN_13 (Najpopularniejszy dla żywności w Europie)
+            9, // EAN_8
+            14 // UPC_A
+        ]
+      },
+      false
+    );
+
+    scanner.render(
+      (decodedText) => {
+        // Po udanym skanowaniu, czyścimy kamerę i zwracamy wynik
+        scanner.clear();
+        onResult(decodedText);
+      },
+      (error) => {
+        // Ignorujemy błędy w tle (skaner rzuca błąd co klatkę, gdy nie widzi kodu)
       }
-    }
-  });
+    );
+
+    // Czyszczenie przy zamknięciu komponentu
+    return () => {
+      scanner.clear().catch(error => console.error("Błąd czyszczenia skanera", error));
+    };
+  }, [onResult]);
 
   return (
     <div className="fixed inset-0 bg-black z-50 flex flex-col items-center justify-center p-4">
-      <h3 className="text-white text-2xl font-black mb-2">Skaner Produktów</h3>
-      <p className="text-gray-300 text-sm font-medium mb-8 text-center max-w-xs">
-        Odsuń telefon na ok. <span className="text-blue-400 font-bold">15-20 cm</span> od kodu, aby aparat mógł wyostrzyć obraz. Zadbaj o dobre światło.
-      </p>
-      
-      <div className="w-full max-w-sm aspect-square rounded-3xl overflow-hidden border-2 border-gray-600 relative bg-gray-900 flex items-center justify-center shadow-[0_0_30px_rgba(0,0,0,0.5)]">
-        <video ref={ref} className="w-full h-full object-cover" />
-        
-        {/* Czerwona linia lasera */}
-        <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-          <div className="w-3/4 h-0.5 bg-red-500 shadow-[0_0_10px_rgba(239,68,68,1)] opacity-70"></div>
-        </div>
-        
-        {/* Nakładka przyciemniająca brzegi */}
-        <div className="absolute inset-0 border-[40px] border-black/50 pointer-events-none"></div>
+      <h3 className="text-white text-2xl font-black mb-4">Skaner Produktów</h3>
+      <div className="w-full max-w-sm bg-white rounded-2xl overflow-hidden p-2 shadow-[0_0_30px_rgba(0,0,0,0.5)]">
+        {/* Kontener dla nowej biblioteki */}
+        <div id="reader" width="100%"></div>
       </div>
-      
       <button 
         onClick={onCancel}
-        className="mt-12 bg-gray-800 text-white px-8 py-4 rounded-2xl font-bold hover:bg-gray-700 transition-colors w-full max-w-sm text-lg"
+        className="mt-8 bg-gray-800 text-white px-8 py-4 rounded-2xl font-bold hover:bg-gray-700 transition-colors w-full max-w-sm text-lg"
       >
         Zamknij skaner
       </button>
