@@ -1,12 +1,10 @@
 'use client';
-// Zmień linijkę importu Recharts na tę:
-import { ComposedChart, Line, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine, Legend } from 'recharts';
+'use client';
 import { collection, addDoc, query, orderBy, onSnapshot, deleteDoc, doc } from "firebase/firestore";
 import { signInWithPopup, GoogleAuthProvider, signOut, onAuthStateChanged } from "firebase/auth";
 import { db, auth } from "./firebase";
 import { useState, useEffect } from 'react';
-// Importy z biblioteki Recharts do obsługi wykresu
-import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine } from 'recharts';
+import { ComposedChart, Line, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine, Legend } from 'recharts';
 
 export default function Home() {
   const [user, setUser] = useState(null);
