@@ -1,17 +1,28 @@
 'use client';
-'use client';
 import { collection, addDoc, query, orderBy, onSnapshot, deleteDoc, doc } from "firebase/firestore";
 import { signInWithPopup, GoogleAuthProvider, signOut, onAuthStateChanged } from "firebase/auth";
 import { db, auth } from "./firebase";
 import { useState, useEffect } from 'react';
 import { ComposedChart, Line, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine, Legend } from 'recharts';
 
+// Funkcje pomocnicze do pobierania aktualnego czasu w lokalnej strefie czasowej
+const getLocalISODate = () => {
+  const tzoffset = (new Date()).getTimezoneOffset() * 60000;
+  return new Date(Date.now() - tzoffset).toISOString().split('T')[0];
+};
+
+const getLocalTime = () => {
+  return new Date().toLocaleTimeString('pl-PL', { hour: '2-digit', minute: '2-digit' });
+};
+
 export default function Home() {
   const [user, setUser] = useState(null);
   const [isAuthChecking, setIsAuthChecking] = useState(true);
-  
-  // NOWOŚĆ: Stan nawigacji między zakładkami ('diary' lub 'reports')
   const [activeTab, setActiveTab] = useState('diary');
+
+  // NOWOŚĆ: Stan dla daty i godziny wpisu w formularzu
+  const [entryDate, setEntryDate] = useState('');
+  const [entryTime, setEntryTime] = useState('');
 
   // Formularz
   const [carbs, setCarbs] = useState('');
@@ -21,9 +32,16 @@ export default function Home() {
   
   // Historia i Filtrowanie
   const [history, setHistory] = useState([]);
-  const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
+  const [selectedDate, setSelectedDate] = useState('');
 
   const mealOptions = ['Śniadanie', 'II Śniadanie', 'Obiad', 'Kolacja', 'Przekąska'];
+
+  // Ustawienie domyślnych dat dopiero po załadowaniu komponentu (aby uniknąć błędów hydratacji Next.js)
+  useEffect(() => {
+    setEntryDate(getLocalISODate());
+    setEntryTime(getLocalTime());
+    setSelectedDate(getLocalISODate());
+  }, []);
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
@@ -74,19 +92,27 @@ export default function Home() {
     const safeInsulin = insulin.replace(',', '.');
     const safeSugar = sugar.replace(',', '.');
 
+    // NOWOŚĆ: Łączymy datę i czas z formularza w jeden prawidłowy znacznik czasu (timestamp)
+    const combinedDateTime = new Date(`${entryDate}T${entryTime}`);
+
     try {
       await addDoc(collection(db, "meals"), {
         carbs: parseFloat(safeCarbs),
         insulin: parseFloat(safeInsulin),
         sugar: safeSugar ? parseFloat(safeSugar) : null,
         mealType,
-        timestamp: new Date().toISOString(),
+        timestamp: combinedDateTime.toISOString(), // Zapisujemy połączony, ręcznie wprowadzony czas
         userEmail: user.email 
       });
       
+      // Resetowanie formularza po udanym zapisie
       setCarbs('');
       setInsulin('');
       setSugar('');
+      // Przywracamy formularz do *aktualnej* daty i godziny dla kolejnych wpisów
+      setEntryDate(getLocalISODate());
+      setEntryTime(getLocalTime());
+      
     } catch (error) {
       console.error("Błąd Firebase:", error);
       alert(`Błąd zapisu: ${error.message}`);
@@ -115,8 +141,8 @@ export default function Home() {
     return date.toLocaleDateString('pl-PL', { month: 'numeric', day: 'numeric' });
   };
 
-  // Filtrowanie i sumowanie dla wybranego dnia (Widok Dziennika)
   const filteredMeals = history.filter((item) => {
+    if(!selectedDate) return false;
     const itemDateStr = new Date(item.timestamp).toISOString().split('T')[0];
     return itemDateStr === selectedDate;
   });
@@ -124,18 +150,16 @@ export default function Home() {
   const totalCarbs = filteredMeals.reduce((sum, item) => sum + (Number(item.carbs) || 0), 0);
   const totalInsulin = filteredMeals.reduce((sum, item) => sum + (Number(item.insulin) || 0), 0);
 
-  // --- LOGIKA PRZYGOTOWANIA DANYCH DO WYKRESU (Zintegrowane) ---
   const chartData = history
-    .slice(0, 20) // bierzemy ostatnich 20 wpisów do wykresu
+    .slice(0, 20)
     .map(item => ({
       name: `${formatDateLabel(item.timestamp)} ${formatTime(item.timestamp)}`,
       'Cukier': item.sugar || null,
       'Węglowodany': Number(item.carbs) || 0,
       'Insulina': Number(item.insulin) || 0,
     }))
-    .reverse(); // odwracamy chronologicznie
+    .reverse();
 
-  // --- LOGIKA RAPORTU TABELARYCZNEGO (Agregacja po dniach) ---
   const dailySummaryObj = {};
   history.forEach(item => {
     const dayKey = new Date(item.timestamp).toLocaleDateString('pl-PL', { year: 'numeric', month: '2-digit', day: '2-digit' });
@@ -153,9 +177,9 @@ export default function Home() {
   const dailySummaryArray = Object.values(dailySummaryObj).map(day => ({
     ...day,
     avgSugar: day.sugarCount > 0 ? Math.round(day.sugarSum / day.sugarCount) : '—'
-  })).slice(0, 14); // Ostatnie 14 dni do tabeli lekarskiej
+  })).slice(0, 14);
 
-  if (isAuthChecking) {
+  if (isAuthChecking || !entryDate) {
     return <div className="min-h-screen flex items-center justify-center bg-gray-100 text-gray-600">Ładowanie...</div>;
   }
 
@@ -165,10 +189,7 @@ export default function Home() {
         <div className="bg-white p-8 rounded-2xl shadow-md border border-gray-200 text-center max-w-sm w-full">
           <h1 className="text-2xl font-bold text-gray-900 mb-6">Dziennik Cukrzycowy</h1>
           <p className="text-gray-600 mb-8">Zaloguj się, aby uzyskać dostęp do dziennika.</p>
-          <button 
-            onClick={handleLogin}
-            className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold text-lg py-4 rounded-xl shadow-md transition-all active:scale-95"
-          >
+          <button onClick={handleLogin} className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold text-lg py-4 rounded-xl shadow-md transition-all active:scale-95">
             Zaloguj się przez Google
           </button>
         </div>
@@ -178,44 +199,53 @@ export default function Home() {
 
   return (
     <div className="max-w-md mx-auto p-4 bg-gray-100 min-h-screen text-gray-900 pb-12">
-      {/* Nagłówek aplikacji */}
       <div className="flex justify-between items-center mb-4">
         <h2 className="text-2xl font-black text-gray-900 tracking-tight">CukierDziennik</h2>
-        <button onClick={handleLogout} className="text-xs font-bold text-gray-400 hover:text-red-500 transition-colors">
-          Wyloguj
-        </button>
+        <button onClick={handleLogout} className="text-xs font-bold text-gray-400 hover:text-red-500 transition-colors">Wyloguj</button>
       </div>
 
-      {/* NOWOŚĆ: Menu zakładek na górze */}
       <div className="flex bg-gray-200 p-1 rounded-xl mb-6 shadow-inner">
-        <button 
-          onClick={() => setActiveTab('diary')}
-          className={`flex-1 text-center font-bold py-2.5 text-sm rounded-lg transition-all ${activeTab === 'diary' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-600 hover:text-gray-900'}`}
-        >
+        <button onClick={() => setActiveTab('diary')} className={`flex-1 text-center font-bold py-2.5 text-sm rounded-lg transition-all ${activeTab === 'diary' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-600 hover:text-gray-900'}`}>
           Dziennik
         </button>
-        <button 
-          onClick={() => setActiveTab('reports')}
-          className={`flex-1 text-center font-bold py-2.5 text-sm rounded-lg transition-all ${activeTab === 'reports' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-600 hover:text-gray-900'}`}
-        >
+        <button onClick={() => setActiveTab('reports')} className={`flex-1 text-center font-bold py-2.5 text-sm rounded-lg transition-all ${activeTab === 'reports' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-600 hover:text-gray-900'}`}>
           Raporty i Wykres
         </button>
       </div>
 
-      {/* ZAKŁADKA 1: DZIENNIK WPISÓW */}
       {activeTab === 'diary' && (
         <>
           <form onSubmit={handleSubmit} className="space-y-5 bg-white p-5 rounded-2xl shadow-md border border-gray-200 mb-6">
+            
+            {/* NOWOŚĆ: Kontrolki Czasu */}
+            <div className="grid grid-cols-2 gap-3 pb-2 border-b border-gray-100">
+              <div>
+                <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1.5">Data wpisu</label>
+                <input 
+                  type="date" 
+                  value={entryDate} 
+                  onChange={(e) => setEntryDate(e.target.value)}
+                  className="w-full text-sm font-bold p-2.5 bg-gray-50 border-2 border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 text-gray-900 outline-none"
+                  required
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1.5">Godzina</label>
+                <input 
+                  type="time" 
+                  value={entryTime} 
+                  onChange={(e) => setEntryTime(e.target.value)}
+                  className="w-full text-sm font-bold p-2.5 bg-gray-50 border-2 border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 text-gray-900 outline-none"
+                  required
+                />
+              </div>
+            </div>
+
             <div>
               <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">Pora dnia</label>
               <div className="flex flex-wrap gap-1.5">
                 {mealOptions.map((meal) => (
-                  <button
-                    key={meal}
-                    type="button"
-                    onClick={() => setMealType(meal)}
-                    className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-colors ${mealType === meal ? 'bg-blue-600 text-white shadow-sm' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'}`}
-                  >
+                  <button key={meal} type="button" onClick={() => setMealType(meal)} className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-colors ${mealType === meal ? 'bg-blue-600 text-white shadow-sm' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'}`}>
                     {meal}
                   </button>
                 ))}
@@ -224,60 +254,28 @@ export default function Home() {
 
             <div>
               <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1.5">Cukier / Glikemia (mg/dl)</label>
-              <input
-                type="text"
-                inputMode="numeric"
-                value={sugar}
-                onChange={(e) => setSugar(e.target.value)}
-                placeholder="np. 124 (opcjonalnie)"
-                className="w-full text-xl font-bold p-3 bg-gray-50 border-2 border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 text-gray-900 placeholder-gray-400 outline-none transition-all focus:border-blue-500"
-              />
+              <input type="text" inputMode="numeric" value={sugar} onChange={(e) => setSugar(e.target.value)} placeholder="np. 124 (opcjonalnie)" className="w-full text-xl font-bold p-3 bg-gray-50 border-2 border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 text-gray-900 placeholder-gray-400 outline-none transition-all focus:border-blue-500" />
             </div>
 
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1.5">Węglowodany (g)</label>
-                <input
-                  type="text"
-                  inputMode="decimal"
-                  value={carbs}
-                  onChange={(e) => setCarbs(e.target.value)}
-                  placeholder="np. 45"
-                  className="w-full text-xl font-bold p-3 bg-gray-50 border-2 border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 text-gray-900 placeholder-gray-400 outline-none transition-all focus:border-blue-500"
-                  required
-                />
+                <input type="text" inputMode="decimal" value={carbs} onChange={(e) => setCarbs(e.target.value)} placeholder="np. 45" className="w-full text-xl font-bold p-3 bg-gray-50 border-2 border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 text-gray-900 placeholder-gray-400 outline-none transition-all focus:border-blue-500" required />
               </div>
-
               <div>
                 <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1.5">Insulina (j.)</label>
-                <input
-                  type="text"
-                  inputMode="decimal"
-                  value={insulin}
-                  onChange={(e) => setInsulin(e.target.value)}
-                  placeholder="np. 3.5"
-                  className="w-full text-xl font-bold p-3 bg-gray-50 border-2 border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 text-gray-900 placeholder-gray-400 outline-none transition-all focus:border-blue-500"
-                  required
-                />
+                <input type="text" inputMode="decimal" value={insulin} onChange={(e) => setInsulin(e.target.value)} placeholder="np. 3.5" className="w-full text-xl font-bold p-3 bg-gray-50 border-2 border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 text-gray-900 placeholder-gray-400 outline-none transition-all focus:border-blue-500" required />
               </div>
             </div>
 
-            <button
-              type="submit"
-              className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold text-base py-3.5 rounded-xl shadow-md transition-all active:scale-95"
-            >
+            <button type="submit" className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold text-base py-3.5 rounded-xl shadow-md transition-all active:scale-95">
               Zapisz wpis
             </button>
           </form>
 
           <div className="mb-4 bg-white p-3 rounded-2xl border border-gray-200 shadow-sm flex items-center justify-between">
             <label className="text-xs font-bold text-gray-500 uppercase tracking-wider">Przeglądaj dzień:</label>
-            <input 
-              type="date" 
-              value={selectedDate}
-              onChange={(e) => setSelectedDate(e.target.value)}
-              className="bg-gray-50 border border-gray-200 text-gray-900 text-sm font-bold rounded-xl p-2 outline-none focus:ring-2 focus:ring-blue-500"
-            />
+            <input type="date" value={selectedDate} onChange={(e) => setSelectedDate(e.target.value)} className="bg-gray-50 border border-gray-200 text-gray-900 text-sm font-bold rounded-xl p-2 outline-none focus:ring-2 focus:ring-blue-500" />
           </div>
 
           <div className="space-y-3">
@@ -323,10 +321,8 @@ export default function Home() {
         </>
       )}
 
-      {/* NOWOŚĆ ZAKŁADKA 2: RAPORTY DLA LEKARZA */}
       {activeTab === 'reports' && (
         <div className="space-y-6 animate-fadeIn">
-          {/* Zintegrowany Wykres: Węgle, Insulina, Cukier */}
           <div className="bg-white p-4 rounded-2xl border border-gray-200 shadow-md">
             <h3 className="text-sm font-bold text-gray-700 uppercase tracking-wider mb-4">Wykres Zależności</h3>
             {chartData.length === 0 ? (
@@ -337,26 +333,14 @@ export default function Home() {
                   <ComposedChart data={chartData} margin={{ top: 5, right: 0, left: -25, bottom: 5 }}>
                     <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
                     <XAxis dataKey="name" tick={{ fontSize: 9, fill: '#9ca3af' }} />
-                    
-                    {/* Lewa oś dla Węglowodanów i Cukru */}
                     <YAxis yAxisId="left" tick={{ fontSize: 10, fill: '#9ca3af' }} />
-                    {/* Prawa oś (zielona) wykalibrowana dla Insuliny */}
                     <YAxis yAxisId="right" orientation="right" tick={{ fontSize: 10, fill: '#10b981' }} />
-                    
                     <Tooltip contentStyle={{ fontSize: '11px', borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }} />
                     <Legend wrapperStyle={{ fontSize: '11px', paddingTop: '10px' }} />
-
-                    {/* Linie ostrzegawcze przypięte do lewej osi (cukier) */}
                     <ReferenceLine yAxisId="left" y={70} stroke="#f59e0b" strokeDasharray="3 3" />
                     <ReferenceLine yAxisId="left" y={180} stroke="#ef4444" strokeDasharray="3 3" />
-
-                    {/* Słupki węglowodanów */}
                     <Bar yAxisId="left" dataKey="Węglowodany" fill="#3b82f6" barSize={12} radius={[4, 4, 0, 0]} />
-                    
-                    {/* Linia i punkty Insuliny (Prawa oś) */}
                     <Line yAxisId="right" type="monotone" dataKey="Insulina" stroke="#10b981" strokeWidth={3} dot={{ r: 3, fill: '#10b981' }} />
-                    
-                    {/* Linia Cukru z connectNulls (Omija puste pola, łączy tylko wpisane glikemie) */}
                     <Line yAxisId="left" type="monotone" dataKey="Cukier" stroke="#ef4444" strokeWidth={3} connectNulls dot={{ r: 4, fill: '#ef4444' }} />
                   </ComposedChart>
                 </ResponsiveContainer>
@@ -364,7 +348,6 @@ export default function Home() {
             )}
           </div>
 
-          {/* Tabela Podsumowań Zbiorczych */}
           <div className="bg-white rounded-2xl border border-gray-200 shadow-md overflow-hidden">
             <div className="p-4 bg-gray-50 border-b border-gray-200">
               <h3 className="text-sm font-bold text-gray-700 uppercase tracking-wider">Zestawienie ostatnich 14 dni</h3>
