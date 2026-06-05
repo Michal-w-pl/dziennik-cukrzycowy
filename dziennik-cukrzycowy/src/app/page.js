@@ -1,11 +1,13 @@
 'use client';
 import { collection, addDoc, query, orderBy, onSnapshot, deleteDoc, doc, where } from "firebase/firestore";
-import { signInWithPopup, GoogleAuthProvider, signOut, onAuthStateChanged } from "firebase/auth";
+import { signInWithRedirect, GoogleAuthProvider, signOut, onAuthStateChanged } from "firebase/auth";
 import { db, auth } from "./firebase";
 import { useState, useEffect, useRef } from 'react';
 import { ComposedChart, Line, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine, Legend } from 'recharts';
 import { Html5QrcodeScanner } from 'html5-qrcode';
 import VoiceInput from "@/components/VoiceInput";
+import jsPDF from 'jspdf';
+import autoTable from 'jspdf-autotable';
 
 const getLocalISODate = () => {
   const tzoffset = (new Date()).getTimezoneOffset() * 60000;
@@ -62,13 +64,24 @@ export default function Home() {
 
   const [history, setHistory] = useState([]);
   const [selectedDate, setSelectedDate] = useState('');
+  
+  // Stany dla raportu PDF
+  const [reportStart, setReportStart] = useState('');
+  const [reportEnd, setReportEnd] = useState('');
 
   const mealOptions = ['Śniadanie', 'II Śniadanie', 'Obiad', 'Kolacja', 'Przekąska'];
 
   useEffect(() => {
-    setEntryDate(getLocalISODate());
+    const today = getLocalISODate();
+    setEntryDate(today);
     setEntryTime(getLocalTime());
-    setSelectedDate(getLocalISODate());
+    setSelectedDate(today);
+    setReportEnd(today);
+    
+    // Ustawienie domyślnego początku raportu na 7 dni wstecz
+    const d = new Date();
+    d.setDate(d.getDate() - 7);
+    setReportStart(d.toISOString().split('T')[0]);
   }, []);
 
   useEffect(() => {
@@ -82,7 +95,6 @@ export default function Home() {
   useEffect(() => {
     if (!user) return;
     
-    // Zapytanie z filtrowaniem bezpieczeństwa - pobiera tylko wpisy zalogowanej osoby
     const q = query(
       collection(db, "meals"), 
       where("userEmail", "==", user.email),
@@ -102,16 +114,19 @@ export default function Home() {
 
   const handleLogin = async () => {
     const provider = new GoogleAuthProvider();
-    try { await signInWithPopup(auth, provider); } catch (error) { alert(`Błąd logowania: ${error.message}`); }
+    try { 
+      // Zmieniamy logowanie na bezpieczne przekierowanie całej strony
+      await signInWithRedirect(auth, provider); 
+    } catch (error) { 
+      alert(`Błąd logowania: ${error.message}`); 
+    }
   };
 
   const handleLogout = async () => {
     try { await signOut(auth); } catch (error) { console.error(error); }
   };
 
-  const handleAiPhotoTrigger = () => {
-    fileInputRef.current.click();
-  };
+  const handleAiPhotoTrigger = () => fileInputRef.current.click();
 
   const handlePhotoChange = async (e) => {
     const file = e.target.files[0];
@@ -129,11 +144,8 @@ export default function Home() {
           body: JSON.stringify({ imageBase64: base64Data })
         });
         const data = await response.json();
-        if (data.error) {
-          alert(`Problem z AI: ${data.error}`);
-        } else {
-          setAiResult(data);
-        }
+        if (data.error) { alert(`Problem z AI: ${data.error}`); } 
+        else { setAiResult(data); }
       } catch (error) {
         alert("Błąd połączenia z modułem analizy zdjęć.");
       } finally {
@@ -181,12 +193,8 @@ export default function Home() {
       
       setMealNotes((prev) => prev ? `${prev}, ${parsedText}` : parsedText);
 
-      // Zliczanie węglowodanów oszacowanych przez Gemini AI
       const totalCarbs = aiData.skladniki.reduce((sum, item) => sum + (item.szacowane_weglowodany || 0), 0);
-      
-      if (totalCarbs > 0) {
-        setCarbs(totalCarbs.toFixed(1).toString());
-      }
+      if (totalCarbs > 0) { setCarbs(totalCarbs.toFixed(1).toString()); }
     }
   };
 
@@ -218,6 +226,57 @@ export default function Home() {
     if (window.confirm("Czy na pewno chcesz usunąć ten wpis?")) {
       try { await deleteDoc(doc(db, "meals", id)); } catch (error) { alert(`Błąd: ${error.message}`); }
     }
+  };
+
+  // Funkcja generująca PDF
+  const generatePDF = () => {
+    const doc = new jsPDF();
+    
+    // Funkcja czyszcząca polskie znaki dla standardowego fontu PDF
+    const normalize = (text) => {
+      if (!text) return '';
+      return text.toString().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/ł/g, "l").replace(/Ł/g, "L");
+    };
+
+    // Filtrujemy historię według wybranych dat i odwracamy chronologicznie (od najstarszego do najnowszego)
+    const filteredForPDF = history.filter(item => {
+      const itemDate = new Date(item.timestamp).toISOString().split('T')[0];
+      return itemDate >= reportStart && itemDate <= reportEnd;
+    }).reverse();
+
+    if (filteredForPDF.length === 0) {
+      alert("Brak danych w wybranym okresie.");
+      return;
+    }
+
+    doc.setFontSize(16);
+    doc.text(`Raport Cukrzycowy (${reportStart} do ${reportEnd})`, 14, 15);
+
+    const tableColumn = ["Data i Czas", "Pora", "Cukier", "Weglowodany", "Insulina", "Uwagi"];
+    const tableRows = [];
+
+    filteredForPDF.forEach(item => {
+      const rowData = [
+        normalize(`${formatDateLabel(item.timestamp)} ${formatTime(item.timestamp)}`),
+        normalize(item.mealType),
+        item.sugar ? `${item.sugar} mg/dl` : '-',
+        `${item.carbs} g`,
+        `${item.insulin} j.`,
+        normalize(item.notes || '')
+      ];
+      tableRows.push(rowData);
+    });
+
+    autoTable(doc, {
+      head: [tableColumn],
+      body: tableRows,
+      startY: 20,
+      styles: { fontSize: 9 },
+      headStyles: { fillColor: [37, 99, 235] }, // Kolor blue-600
+      columnStyles: { 5: { cellWidth: 50 } } // Szersza kolumna dla uwag
+    });
+
+    doc.save(`Raport_Cukrzycowy_${reportStart}_${reportEnd}.pdf`);
   };
 
   const formatTime = (isoString) => new Date(isoString).toLocaleTimeString('pl-PL', { hour: '2-digit', minute: '2-digit' });
@@ -303,7 +362,6 @@ export default function Home() {
                   <p className="text-sm font-bold text-gray-600 mb-1">Szacowane węglowodany:</p>
                   <p className="font-black text-emerald-600 text-4xl">{aiResult.carbs}<span className="text-lg text-emerald-400 ml-1">g</span></p>
                 </div>
-                
                 <div className="flex gap-2 w-full">
                   <button type="button" onClick={() => setAiResult(null)} className="flex-1 bg-gray-200 text-gray-700 font-bold py-4 rounded-xl">Odrzuć</button>
                   <button type="button" onClick={applyAiCalculation} className="flex-[2] bg-emerald-600 text-white font-bold py-4 rounded-xl shadow-md active:scale-95 transition-transform">Wpisz do formularza</button>
@@ -316,10 +374,8 @@ export default function Home() {
                 <span className="text-xs font-bold text-indigo-600 uppercase tracking-wider mb-1">Znaleziono produkt</span>
                 <h3 className="text-lg font-black text-gray-900 mb-2 leading-tight">{scannedProduct.name}</h3>
                 <p className="text-sm font-medium text-gray-600 mb-6">Węglowodany: <span className="font-bold text-indigo-600">{scannedProduct.carbsPer100}g</span> w 100g</p>
-                
                 <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">Ile gramów zjadasz?</label>
                 <input type="text" inputMode="numeric" value={portionWeight} onChange={(e) => setPortionWeight(e.target.value)} placeholder="np. 150" className="w-3/4 text-center text-3xl font-black p-3 bg-gray-100 border-2 border-gray-300 rounded-xl focus:ring-2 focus:ring-indigo-500 text-gray-900 mb-6 outline-none" autoFocus />
-                
                 <div className="flex gap-2 w-full">
                   <button type="button" onClick={() => setScannedProduct(null)} className="flex-1 bg-gray-200 text-gray-700 font-bold py-3 rounded-xl">Anuluj</button>
                   <button type="button" onClick={applyPortionCalculation} className="flex-1 bg-indigo-600 text-white font-bold py-3 rounded-xl shadow-md">Przelicz</button>
@@ -354,13 +410,7 @@ export default function Home() {
 
             <div className="bg-gray-50 p-3 rounded-xl border border-gray-200">
               <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1.5">Co jesz? (Podyktuj lub wpisz)</label>
-              <textarea 
-                value={mealNotes} 
-                onChange={(e) => setMealNotes(e.target.value)} 
-                placeholder="np. kanapka z serem, 2 pomidory..." 
-                className="w-full text-sm font-medium p-3 bg-white border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none mb-3" 
-                rows="2"
-              ></textarea>
+              <textarea value={mealNotes} onChange={(e) => setMealNotes(e.target.value)} placeholder="np. kanapka z serem, 2 pomidory..." className="w-full text-sm font-medium p-3 bg-white border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none mb-3" rows="2"></textarea>
               <VoiceInput onIngredientsParsed={handleVoiceData} />
             </div>
 
@@ -368,7 +418,6 @@ export default function Home() {
               <button type="button" onClick={() => setIsScanning(true)} className="bg-indigo-50 border-2 border-indigo-100 text-indigo-700 font-bold py-3 rounded-xl shadow-sm flex flex-col items-center justify-center gap-1 transition-all active:bg-indigo-100">
                 <span className="text-xl">📊</span> <span className="text-[10px] uppercase tracking-wider">Skanuj kod</span>
               </button>
-              
               <button type="button" onClick={handleAiPhotoTrigger} className="bg-emerald-50 border-2 border-emerald-100 text-emerald-700 font-bold py-3 rounded-xl shadow-sm flex flex-col items-center justify-center gap-1 transition-all active:bg-emerald-100">
                 <span className="text-xl">📸</span> <span className="text-[10px] uppercase tracking-wider">Foto (AI)</span>
               </button>
@@ -385,9 +434,7 @@ export default function Home() {
               </div>
             </div>
 
-            <button type="submit" className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold text-base py-3.5 rounded-xl shadow-md transition-all active:scale-95 mt-2">
-              Zapisz wpis
-            </button>
+            <button type="submit" className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold text-base py-3.5 rounded-xl shadow-md transition-all active:scale-95 mt-2">Zapisz wpis</button>
           </form>
 
           <div className="mb-4 bg-white p-3 rounded-2xl border border-gray-200 shadow-sm flex items-center justify-between">
@@ -417,9 +464,7 @@ export default function Home() {
                     <div className="flex-1">
                       <span className="text-xs font-bold text-blue-500 uppercase tracking-wider">{formatTime(item.timestamp)} - {item.mealType}</span>
                       {item.sugar && <div className="mt-0.5"><span className="inline-block bg-red-50 text-red-600 text-xs font-black px-2 py-0.5 rounded-md border border-red-100">Cukier: {item.sugar} mg/dl</span></div>}
-                      
                       {item.notes && <div className="text-sm font-medium text-gray-700 mt-1 italic">{item.notes}</div>}
-                      
                       <div className="text-base font-bold text-gray-900 mt-1">Węglowodany: <span className="text-blue-600">{item.carbs}g</span></div>
                     </div>
                     <div className="flex flex-col items-end justify-between ml-2">
@@ -439,6 +484,28 @@ export default function Home() {
 
       {activeTab === 'reports' && (
         <div className="space-y-6 animate-fadeIn">
+          
+          {/* NOWA SEKCJA: Generator PDF */}
+          <div className="bg-white p-5 rounded-2xl border border-gray-200 shadow-md">
+            <h3 className="text-sm font-black text-gray-800 uppercase tracking-wider mb-4 flex items-center gap-2">
+              <span className="text-xl">📄</span> Raport dla lekarza
+            </h3>
+            <div className="grid grid-cols-2 gap-3 mb-4">
+              <div>
+                <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1.5">Od dnia</label>
+                <input type="date" value={reportStart} onChange={(e) => setReportStart(e.target.value)} className="w-full text-sm font-bold p-2.5 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 text-gray-900 outline-none" />
+              </div>
+              <div>
+                <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1.5">Do dnia</label>
+                <input type="date" value={reportEnd} onChange={(e) => setReportEnd(e.target.value)} className="w-full text-sm font-bold p-2.5 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 text-gray-900 outline-none" />
+              </div>
+            </div>
+            <button onClick={generatePDF} className="w-full bg-red-500 hover:bg-red-600 text-white font-bold py-3.5 rounded-xl shadow-sm transition-all active:scale-95 flex justify-center items-center gap-2">
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2.5} stroke="currentColor" className="w-5 h-5"><path strokeLinecap="round" strokeLinejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m2.25 0H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 0 0-9-9Z" /></svg>
+              Pobierz PDF z wynikami
+            </button>
+          </div>
+
           <div className="bg-white p-4 rounded-2xl border border-gray-200 shadow-md">
             <h3 className="text-sm font-bold text-gray-700 uppercase tracking-wider mb-4">Wykres Zależności</h3>
             {chartData.length === 0 ? (
