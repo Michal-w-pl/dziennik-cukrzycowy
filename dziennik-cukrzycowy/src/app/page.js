@@ -1,6 +1,6 @@
 'use client';
 import { collection, addDoc, query, orderBy, onSnapshot, deleteDoc, doc, where } from "firebase/firestore";
-import { signInWithRedirect, GoogleAuthProvider, signOut, onAuthStateChanged } from "firebase/auth";
+import { signInWithPopup, GoogleAuthProvider, signOut, onAuthStateChanged } from "firebase/auth";
 import { db, auth } from "./firebase";
 import { useState, useEffect, useRef } from 'react';
 import { ComposedChart, Line, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine, Legend } from 'recharts';
@@ -115,10 +115,19 @@ export default function Home() {
   const handleLogin = async () => {
     const provider = new GoogleAuthProvider();
     try { 
-      // Zmienione na bezpieczne logowanie z przekierowaniem strony dla PWA
-      await signInWithRedirect(auth, provider); 
+      // 1. Otwiera okienko Google
+      const result = await signInWithPopup(auth, provider); 
+      
+      // 2. MAGIA: Natychmiast po udanym logowaniu ręcznie ustawiamy użytkownika,
+      // dzięki czemu NIE MUSISZ już odświeżać strony!
+      setUser(result.user);
+      setIsAuthChecking(false);
+      
     } catch (error) { 
-      alert(`Błąd logowania: ${error.message}`); 
+      // Jeśli użytkownik sam zamknie okienko, zignoruj błąd. W przeciwnym razie wyświetl.
+      if (error.code !== 'auth/popup-closed-by-user' && error.code !== 'auth/cancelled-popup-request') {
+        alert(`Błąd logowania: ${error.message}`); 
+      }
     }
   };
 
