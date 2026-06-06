@@ -116,15 +116,13 @@ export default function Home() {
     const provider = new GoogleAuthProvider();
     try { 
       // 1. Otwiera okienko Google
-      const result = await signInWithPopup(auth, provider); 
+      await signInWithPopup(auth, provider); 
       
-      // 2. MAGIA: Natychmiast po udanym logowaniu ręcznie ustawiamy użytkownika,
-      // dzięki czemu NIE MUSISZ już odświeżać strony!
-      setUser(result.user);
-      setIsAuthChecking(false);
+      // 2. Automatyczny "twardy" reset strony po zalogowaniu.
+      // Wymusza to na aplikacji natychmiastowe przebudzenie i zaciągnięcie konta z Firebase.
+      window.location.reload();
       
     } catch (error) { 
-      // Jeśli użytkownik sam zamknie okienko, zignoruj błąd. W przeciwnym razie wyświetl.
       if (error.code !== 'auth/popup-closed-by-user' && error.code !== 'auth/cancelled-popup-request') {
         alert(`Błąd logowania: ${error.message}`); 
       }
